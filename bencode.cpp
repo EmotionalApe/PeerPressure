@@ -1,6 +1,7 @@
 #include "bencode.h"
 #include <stdexcept>
 #include <cctype>
+#include <iostream>
 
 
 BencodeValue parse_any(const std::string &data, size_t &i) {
@@ -79,7 +80,7 @@ BencodeValue parse_dict(const std::string& data, size_t& i) {
     while (i<data.size() && data[i]!='e'){
         BencodeValue key_val = parse_string(data,i);
         std::string key = std::get<std::string>(key_val);
-        
+
         BencodeValue value = parse_any(data,i);
         dict[key] = value;
     }
@@ -91,4 +92,44 @@ BencodeValue parse_dict(const std::string& data, size_t& i) {
     return dict;
 }
 
+void print_indent(int indent) {
+    for (int i=0; i<indent; i++) {
+        std::cout << "    ";
+    }
+}
+
+
+void print_bencode(const BencodeValue& value, int indent) {
+    std::visit([indent](auto&& v) {
+        using T = std::decay_t<decltype(v)>;
+
+        if constexpr (std::is_same_v<T, int64_t>) {
+            std::cout << v;
+        }
+        else if constexpr (std::is_same_v<T, std::string>) {
+            std::cout << "\"" << v << "\"";
+        }
+        else if constexpr (std::is_same_v<T, BencodeList>) {
+            std::cout << "[\n";
+            for (const auto& item : v) {
+                print_indent(indent + 1);
+                print_bencode(item, indent + 1);
+                std::cout << "\n";
+            }
+            print_indent(indent);
+            std::cout << "]";
+        }
+        else if constexpr (std::is_same_v<T, BencodeDict>) {
+            std::cout << "{\n";
+            for (const auto& [key, val] : v) {
+                print_indent(indent + 1);
+                std::cout << key << ": ";
+                print_bencode(val, indent + 1);
+                std::cout << "\n";
+            }
+            print_indent(indent);
+            std::cout << "}";
+        }
+    }, value);
+}
 

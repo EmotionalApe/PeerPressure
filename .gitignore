@@ -1,0 +1,102 @@
+# =========================
+# Compiled Object files
+# =========================
+*.o
+*.obj
+*.lo
+*.la
+*.al
+
+# =========================
+# Precompiled Headers
+# =========================
+*.gch
+*.pch
+
+# =========================
+# Compiled Dynamic libraries
+# =========================
+*.so
+*.dylib
+*.dll
+
+# =========================
+# Compiled Static libraries
+# =========================
+*.a
+*.lib
+
+# =========================
+# Executables
+# =========================
+*.exe
+*.out
+*.app
+
+# =========================
+# Debug files
+# =========================
+*.dSYM/
+*.su
+*.idb
+*.pdb
+
+# =========================
+# Logs
+# =========================
+*.log
+
+# =========================
+# Build directories
+# =========================
+build/
+bin/
+Debug/
+Release/
+cmake-build-*/
+
+# =========================
+# CMake files
+# =========================
+CMakeCache.txt
+CMakeFiles/
+Makefile
+cmake_install.cmake
+compile_commands.json
+
+# =========================
+# Autotools files
+# =========================
+aclocal.m4
+autom4te.cache/
+configure
+config.log
+config.status
+
+# =========================
+# VS Code
+# =========================
+.vscode/
+
+# =========================
+# CLion / JetBrains
+# =========================
+.idea/
+
+# =========================
+# Visual Studio
+# =========================
+.vs/
+*.vcxproj*
+*.sln
+*.filters
+
+# =========================
+# MacOS
+# =========================
+.DS_Store
+
+# =========================
+# Linux
+# =========================
+*~

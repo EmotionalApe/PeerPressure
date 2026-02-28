@@ -23,3 +23,5 @@ BencodeValue parse_int (const std::string &data, size_t &i);
 BencodeValue parse_string (const std::string &data, size_t &i);
 BencodeValue parse_list (const std::string &data, size_t &i);
 BencodeValue parse_dict (const std::string &data, size_t &i);
+
+void print_bencode(const BencodeValue &val, int indent=0);
