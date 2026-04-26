@@ -1,30 +1,16 @@
 #include <iostream>
-#include <fstream>
-#include <sstream>
 #include "bencode.h"
 
 int main() {
-    std::ifstream file("test.torrent", std::ios::binary);
-    if (!file.is_open()) {
-        std::cerr << "Error opening file" << std::endl;
-        return 1;
-    }
-
-    std::stringstream buffer;
-    buffer << file.rdbuf();
-    std::string torrent_data = buffer.str();
-
+    std::string test = "d3:cow3:moo4:spam4:eggse";
     size_t index = 0;
-    try{
-        BencodeValue val = parse_any(torrent_data, index);
-        std::cout << "Torrent parsed successfully\n\n";
-        print_bencode(val);
-        std::cout << "\n";
-    }
-    catch (const std::exception& e) {
-        std::cerr << "Error parsing torrent: " << e.what() << std::endl;
-        return 1;
-    }
+
+    BencodeValue val = parse_any(test, index);
+
+    std::string encoded = bencode(val);
+
+    std::cout << "Original: " << test << "\n";
+    std::cout << "Re-encoded: " << encoded << "\n";
 
     return 0;
 }

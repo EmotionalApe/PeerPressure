@@ -32,13 +32,13 @@ BencodeValue parse_string(const std::string &data, size_t &i) {
     size_t length = std::stoull(data.substr(i, colon - i));
     i = colon + 1;
     
-    std::string str=data.substr(i, length);
+    std::string str = data.substr(i, length);
     i += length;
-    return str;
+    return BencodeValue(str);
 }
 
 BencodeValue parse_int(const std::string &data, size_t &i) {
-    if (data[i]!='i') {
+    if (data[i] != 'i') {
         throw std::runtime_error("Invalid bencode int: missing 'i'");
     }
     i++;
@@ -49,87 +49,111 @@ BencodeValue parse_int(const std::string &data, size_t &i) {
     }
     int64_t value = std::stoll(data.substr(i, end - i));
     i = end + 1;
-    return value;
+    return BencodeValue(value);
 }
 
 BencodeValue parse_list(const std::string& data, size_t& i) {
-    if (data[i]!='l') {
+    if (data[i] != 'l') {
         throw std::runtime_error("Invalid bencode list: missing 'l'");
     }
     i++;
 
-    BencodeList list;
-    while (i<data.size() && data[i]!='e'){
-        list.push_back(parse_any(data,i));
+    BencodeValue val;
+    val._type = BencodeType::List;
+    while (i < data.size() && data[i] != 'e') {
+        val._list_val.push_back(parse_any(data, i));
     }
 
-    if (i>=data.size()) {
+    if (i >= data.size()) {
         throw std::runtime_error("Invalid bencode list: missing 'e'");
     }
     i++;
-    return list;
+    return val;
 }
 
 BencodeValue parse_dict(const std::string& data, size_t& i) {
-    if (data[i]!='d') {
+    if (data[i] != 'd') {
         throw std::runtime_error("Invalid bencode dict: missing 'd'");
     }
     i++;
 
-    BencodeDict dict;
-    while (i<data.size() && data[i]!='e'){
-        BencodeValue key_val = parse_string(data,i);
-        std::string key = std::get<std::string>(key_val);
+    BencodeValue val;
+    val._type = BencodeType::Dictionary;
+    while (i < data.size() && data[i] != 'e') {
+        BencodeValue key_val = parse_string(data, i);
+        std::string key = key_val._str_val;
 
-        BencodeValue value = parse_any(data,i);
-        dict[key] = value;
+        val._dict_val[key] = parse_any(data, i);
     }
 
-    if (i>=data.size()) {
+    if (i >= data.size()) {
         throw std::runtime_error("Invalid bencode dict: missing 'e'");
     }
     i++;
-    return dict;
+    return val;
 }
 
 void print_indent(int indent) {
-    for (int i=0; i<indent; i++) {
+    for (int i = 0; i < indent; i++) {
         std::cout << "    ";
     }
 }
 
-
 void print_bencode(const BencodeValue& value, int indent) {
-    std::visit([indent](auto&& v) {
-        using T = std::decay_t<decltype(v)>;
-
-        if constexpr (std::is_same_v<T, int64_t>) {
-            std::cout << v;
-        }
-        else if constexpr (std::is_same_v<T, std::string>) {
-            std::cout << "\"" << v << "\"";
-        }
-        else if constexpr (std::is_same_v<T, BencodeList>) {
+    switch (value._type) {
+        case BencodeType::Integer:
+            std::cout << value._int_val;
+            break;
+        case BencodeType::String:
+            std::cout << "\"" << value._str_val << "\"";
+            break;
+        case BencodeType::List:
             std::cout << "[\n";
-            for (const auto& item : v) {
+            for (const auto& item : value._list_val) {
                 print_indent(indent + 1);
                 print_bencode(item, indent + 1);
-                std::cout << "\n";
+                std::cout << ",\n";
             }
             print_indent(indent);
             std::cout << "]";
-        }
-        else if constexpr (std::is_same_v<T, BencodeDict>) {
+            break;
+        case BencodeType::Dictionary:
             std::cout << "{\n";
-            for (const auto& [key, val] : v) {
+            for (const auto& pair : value._dict_val) {
                 print_indent(indent + 1);
-                std::cout << key << ": ";
-                print_bencode(val, indent + 1);
-                std::cout << "\n";
+                std::cout << pair.first << ": ";
+                print_bencode(pair.second, indent + 1);
+                std::cout << ",\n";
             }
             print_indent(indent);
             std::cout << "}";
+            break;
+    }
+}
+
+std::string bencode(const BencodeValue& value) {
+    switch (value._type) {
+        case BencodeType::Integer:
+            return "i" + std::to_string(value._int_val) + "e";
+        case BencodeType::String:
+            return std::to_string(value._str_val.size()) + ":" + value._str_val;
+        case BencodeType::List: {
+            std::string result = "l";
+            for (const auto& item : value._list_val) {
+                result += bencode(item);
+            }
+            result += "e";
+            return result;
         }
-    }, value);
+        case BencodeType::Dictionary: {
+            std::string result = "d";
+            for (const auto& pair : value._dict_val) {
+                result += bencode(pair.first) + bencode(pair.second);
+            }
+            result += "e";
+            return result;
+        }
+    }
+    return "";
 }
 
