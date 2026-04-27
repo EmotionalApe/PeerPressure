@@ -14,7 +14,7 @@ enum class BencodeType {
 };
 
 class BencodeValue {
-private:
+public:
     BencodeType _type;
     int64_t _int_val;
     std::string _str_val;
@@ -22,6 +22,7 @@ private:
     std::map<std::string, BencodeValue> _dict_val;
 
 public:
+
     // Constructors (Simplified Style)
     BencodeValue() {
         _type = BencodeType::Integer;
