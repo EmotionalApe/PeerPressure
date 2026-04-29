@@ -104,9 +104,21 @@ void print_bencode(const BencodeValue& value, int indent) {
         case BencodeType::Integer:
             std::cout << value._int_val;
             break;
-        case BencodeType::String:
-            std::cout << "\"" << value._str_val << "\"";
+        case BencodeType::String: {
+            bool is_printable = true;
+            for (unsigned char c : value._str_val) {
+                if (!std::isprint(c) && !std::isspace(c)) {
+                    is_printable = false;
+                    break;
+                }
+            }
+            if (is_printable && value._str_val.length() < 1000) {
+                std::cout << "\"" << value._str_val << "\"";
+            } else {
+                std::cout << "<binary data, length " << value._str_val.length() << ">";
+            }
             break;
+        }
         case BencodeType::List:
             std::cout << "[\n";
             for (const auto& item : value._list_val) {
