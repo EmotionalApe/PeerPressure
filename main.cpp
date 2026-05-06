@@ -4,43 +4,17 @@
 #include <vector>
 #include <cstdlib>
 #include <iomanip>
-#include <curl/curl.h>
 #include "bencode.h"
 #include "sha1.hpp"
-
-// --- Helper Functions ---
-
-std::vector<unsigned char> hex_to_bytes(const std::string& hex) {
-    std::vector<unsigned char> bytes;
-    for (size_t i = 0; i < hex.length(); i += 2) {
-        std::string byteString = hex.substr(i, 2);
-        bytes.push_back(static_cast<unsigned char>(std::stoi(byteString, nullptr, 16)));
-    }
-    return bytes;
-}
-
-template <typename T>
-std::string url_encode(const T& data) {
-    std::ostringstream oss;
-    for (unsigned char byte : data) {
-        oss << '%' << std::uppercase << std::hex << std::setw(2) << std::setfill('0') << static_cast<int>(byte);
-    }
-    return oss.str();
-}
-
-size_t write_callback(void* contents, size_t size, size_t nmemb, std::string* output) {
-    size_t total = size * nmemb;
-    output->append((char*)contents, total);
-    return total;
-}
+#include "tracker.h"
 
 // --- Torrent Logic ---
 
 int main() {
     // 1. Load Torrent File
-    std::ifstream file("test2.torrent", std::ios::binary);
+    std::ifstream file("test.torrent", std::ios::binary);
     if (!file) {
-        std::cerr << "Error: Could not open test2.torrent\n";
+        std::cerr << "Error: Could not open test.torrent\n";
         return 1;
     }
 
@@ -78,57 +52,23 @@ int main() {
     sha1.update(encoded_info);
     std::string hash_hex = sha1.final();
     
-    std::string encoded_hash = url_encode(hex_to_bytes(hash_hex));
-    std::string peer_id = "-PC0001-123456789012";
-    std::string encoded_peer_id = url_encode(peer_id);
-
-    // 5. Construct Tracker URL
-    std::string url = announce +
-        "?info_hash=" + encoded_hash +
-        "&peer_id=" + encoded_peer_id +
-        "&port=6881" +
-        "&uploaded=0" +
-        "&downloaded=0" +
-        "&left=" + std::to_string(total_length) +
-        "&compact=0";
-
     std::cout << "Announce URL: " << announce << "\n";
     std::cout << "Info Hash:    " << hash_hex << "\n";
-    std::cout << "Total Size:   " << total_length << " bytes\n";
-    std::cout << "Tracker URL:  " << url << "\n\n";
+    std::cout << "Total Size:   " << total_length << " bytes\n\n";
 
-    // 6. Request Peers from Tracker
-    CURL* curl = curl_easy_init();
-    if (!curl) return 1;
+    // 5. Request Peers from Tracker
+    Tracker tracker(announce, hash_hex, total_length);
+    std::vector<Peer> peers = tracker.get_peers();
 
-    std::string response;
-    curl_easy_setopt(curl, CURLOPT_URL, url.c_str());
-    curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, write_callback);
-    curl_easy_setopt(curl, CURLOPT_WRITEDATA, &response);
-    curl_easy_setopt(curl, CURLOPT_FOLLOWLOCATION, 1L);
-
-    CURLcode res = curl_easy_perform(curl);
-    if (res != CURLE_OK) {
-        std::cerr << "Tracker Request Failed: " << curl_easy_strerror(res) << "\n";
-        curl_easy_cleanup(curl);
-        return 1;
-    }
-
-    // 7. Parse and Display Peers
-    size_t resp_index = 0;
-    BencodeValue tracker_data = parse_any(response, resp_index);
-    
-    if (tracker_data._dict_val.count("peers")) {
-        auto& peers = tracker_data._dict_val["peers"]._list_val;
+    // 6. Display Peers
+    if (!peers.empty()) {
         std::cout << "Found " << peers.size() << " peers:\n";
         for (const auto& peer : peers) {
-            auto& p = peer._dict_val;
-            std::cout << "  - " << p.at("ip")._str_val << ":" << p.at("port")._int_val << "\n";
+            std::cout << "  - " << peer.ip << ":" << peer.port << "\n";
         }
     } else {
-        std::cout << "No peers found in tracker response.\n";
+        std::cout << "No peers found or tracker request failed.\n";
     }
 
-    curl_easy_cleanup(curl);
     return 0;
 }
