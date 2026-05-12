@@ -7,12 +7,13 @@
 #include "bencode.h"
 #include "sha1.hpp"
 #include "tracker.h"
+#include "peer.h"
 
 // --- Torrent Logic ---
 
 int main() {
     // 1. Load Torrent File
-    std::ifstream file("test.torrent", std::ios::binary);
+    std::ifstream file("test2.torrent", std::ios::binary);
     if (!file) {
         std::cerr << "Error: Could not open test.torrent\n";
         return 1;
@@ -65,6 +66,32 @@ int main() {
         std::cout << "Found " << peers.size() << " peers:\n";
         for (const auto& peer : peers) {
             std::cout << "  - " << peer.ip << ":" << peer.port << "\n";
+        }
+
+        // 7. Peer Handshake (Attempt with peers until one succeeds)
+        std::vector<unsigned char> raw_info_hash = tracker.get_raw_info_hash();
+        bool handshake_success = false;
+
+        for (const auto& peer : peers) {
+            std::cout << "\nAttempting handshake with " << peer.ip << ":" << peer.port << "...\n";
+            
+            PeerConnection conn(peer.ip, peer.port);
+
+            if (conn.connect_to_peer()) {
+                if (conn.send_handshake(raw_info_hash, "-PC0001-123456789012")) {
+                    if (conn.receive_handshake(raw_info_hash)) {
+                        std::cout << "Handshake verified with peer " << peer.ip << "!\n";
+                        handshake_success = true;
+                        conn.close_connection();
+                        break;
+                    }
+                }
+                conn.close_connection();
+            }
+        }
+
+        if (!handshake_success) {
+            std::cout << "\nFailed to handshake with any available peers.\n";
         }
     } else {
         std::cout << "No peers found or tracker request failed.\n";

@@ -87,3 +87,7 @@ std::vector<Peer> Tracker::get_peers() {
     curl_easy_cleanup(curl);
     return peer_list;
 }
+
+std::vector<unsigned char> Tracker::get_raw_info_hash() {
+    return hex_to_bytes(info_hash);
+}
