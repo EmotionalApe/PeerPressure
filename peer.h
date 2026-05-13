@@ -35,5 +35,15 @@ public:
         const std::vector<unsigned char>& expected_info_hash
     );
 
+    int receive_message(); 
+
+    bool send_interested();
+
+    bool send_request(
+        uint32_t index,
+        uint32_t begin,
+        uint32_t length
+    );
+
     void close_connection();
 };

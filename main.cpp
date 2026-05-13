@@ -82,6 +82,32 @@ int main() {
                     if (conn.receive_handshake(raw_info_hash)) {
                         std::cout << "Handshake verified with peer " << peer.ip << "!\n";
                         handshake_success = true;
+                        if (conn.receive_message() < 0) {}
+
+                        if (!conn.send_interested()) {
+                            std::cerr << "Failed to send interested\n";
+                        }
+
+                        bool unchoked = false;
+                        while (true) {
+                            int msg_id = conn.receive_message();
+                            if (msg_id == -1) break; 
+                            
+                            if (msg_id == 1) { // Unchoke
+                                std::cout << "Peer " << peer.ip << " unchoked us. Downloading...\n";
+                                unchoked = true;
+                                break;
+                            }
+                        }
+
+                        if (unchoked) {
+                            if (conn.send_request(0, 0, 16384)) {
+                                if (conn.receive_message() == 7) {
+                                    std::cout << "Successfully downloaded block from " << peer.ip << "!\n";
+                                }
+                            }
+                        }
+                        
                         conn.close_connection();
                         break;
                     }

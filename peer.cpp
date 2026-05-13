@@ -41,7 +41,7 @@ bool PeerConnection::connect_to_peer() {
 
     // Set socket timeouts
 #ifdef _WIN32
-    DWORD timeout = 5000; // 5 seconds in ms
+    DWORD timeout = 30000; // 30 seconds in ms
     setsockopt(sockfd, SOL_SOCKET, SO_RCVTIMEO, (const char*)&timeout, sizeof(timeout));
     setsockopt(sockfd, SOL_SOCKET, SO_SNDTIMEO, (const char*)&timeout, sizeof(timeout));
 #else
@@ -150,6 +150,160 @@ bool PeerConnection::receive_handshake(
     }
 
     std::cout << "Handshake successful!\n";
+    return true;
+}
+
+int PeerConnection::receive_message() {
+
+    unsigned char length_buf[4];
+    int total_received = 0;
+
+    while (total_received < 4) {
+        int r = recv(sockfd,
+                    reinterpret_cast<char*>(length_buf) + total_received,
+                    4 - total_received,
+                    0);
+        if (r <= 0) {
+            if (r == 0) {
+                std::cerr << "Peer closed connection while reading length\n";
+            } else {
+                #ifdef _WIN32
+                std::cerr << "Socket error while reading length. Error Code: " << WSAGetLastError() << "\n";
+                #else
+                std::cerr << "Socket error while reading length. errno: " << errno << "\n";
+                #endif
+            }
+            return -1;
+        }
+        total_received += r;
+    }
+
+    uint32_t length =
+        (length_buf[0] << 24) |
+        (length_buf[1] << 16) |
+        (length_buf[2] << 8) |
+        length_buf[3];
+
+    // keepalive
+    if (length == 0) {
+        return -2;
+    }
+
+    if (length > 1024 * 1024) { // Safety check: 1MB max message for now
+        std::cerr << "Message too large: " << length << "\n";
+        return -1;
+    }
+
+    // 2. Read exactly 1 byte for the message ID
+    unsigned char message_id;
+    int r = recv(sockfd, reinterpret_cast<char*>(&message_id), 1, 0);
+    if (r != 1) {
+        std::cerr << "Failed to read message id\n";
+        return -1;
+    }
+
+    // 3. Read the entire payload
+    int payload_length = length - 1;
+    if (payload_length > 0) {
+        std::vector<unsigned char> payload(payload_length);
+        int payload_received = 0;
+        
+        while (payload_received < payload_length) {
+            int r = recv(sockfd,
+                        reinterpret_cast<char*>(payload.data()) + payload_received,
+                        payload_length - payload_received,
+                        0);
+            if (r <= 0) {
+                std::cerr << "Failed to read full payload\n";
+                return -1;
+            }
+            payload_received += r;
+        }
+    }
+
+    return static_cast<int>(message_id);
+}
+
+bool PeerConnection::send_interested() {
+
+    unsigned char msg[5] = {
+        0, 0, 0, 1, // length prefix
+        2            // interested
+    };
+
+    int sent = send(sockfd,
+        reinterpret_cast<char*>(msg),
+        5,
+        0);
+
+    if (sent != 5) {
+        std::cerr << "Failed to send interested message\n";
+        return false;
+    }
+
+    std::cout << "Interested message sent\n";
+
+    return true;
+}
+
+bool PeerConnection::send_request(
+    uint32_t piece_index,
+    uint32_t begin,
+    uint32_t length
+) {
+
+    std::vector<unsigned char> msg;
+
+    // total payload length = 13
+    uint32_t msg_length = htonl(13);
+
+    // append length prefix
+    msg.insert(msg.end(),
+        reinterpret_cast<unsigned char*>(&msg_length),
+        reinterpret_cast<unsigned char*>(&msg_length) + 4);
+
+    // message id = 6 (request)
+    msg.push_back(6);
+
+    // piece index
+    uint32_t piece_be = htonl(piece_index);
+
+    msg.insert(msg.end(),
+        reinterpret_cast<unsigned char*>(&piece_be),
+        reinterpret_cast<unsigned char*>(&piece_be) + 4);
+
+    // begin offset
+    uint32_t begin_be = htonl(begin);
+
+    msg.insert(msg.end(),
+        reinterpret_cast<unsigned char*>(&begin_be),
+        reinterpret_cast<unsigned char*>(&begin_be) + 4);
+
+    // block length
+    uint32_t length_be = htonl(length);
+
+    msg.insert(msg.end(),
+        reinterpret_cast<unsigned char*>(&length_be),
+        reinterpret_cast<unsigned char*>(&length_be) + 4);
+
+    int sent = send(sockfd,
+        reinterpret_cast<const char*>(msg.data()),
+        msg.size(),
+        0);
+
+    if (sent != msg.size()) {
+        std::cerr << "Failed to send request message\n";
+        return false;
+    }
+
+    std::cout << "Requested piece "
+              << piece_index
+              << ", offset "
+              << begin
+              << ", length "
+              << length
+              << "\n";
+
     return true;
 }
 
