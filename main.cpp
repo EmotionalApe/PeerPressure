@@ -8,10 +8,13 @@
 #include "sha1.hpp"
 #include "tracker.h"
 #include "peer.h"
+#include "utils.h"
+#include <curl/curl.h>
 
 // --- Torrent Logic ---
 
 int main() {
+    curl_global_init(CURL_GLOBAL_DEFAULT);
     // 1. Load Torrent File
     std::ifstream file("test2.torrent", std::ios::binary);
     if (!file) {
@@ -36,6 +39,12 @@ int main() {
     std::string announce = dict["announce"]._str_val;
     BencodeValue info = dict["info"];
     auto& info_dict = info._dict_val;
+
+    //pieces blob for hash checking
+    std::string pieces_blob = info_dict["pieces"]._str_val; 
+    //piece 0 hash
+    std::string expected_hash = pieces_blob.substr(0, 20); 
+
 
     // 3. Calculate Total Length
     int64_t total_length = 0;
@@ -82,7 +91,12 @@ int main() {
                     if (conn.receive_handshake(raw_info_hash)) {
                         std::cout << "Handshake verified with peer " << peer.ip << "!\n";
                         handshake_success = true;
-                        if (conn.receive_message() < 0) {}
+                        
+                        PeerConnection::PeerMessage msg = conn.receive_message();
+                        if (!msg.valid) {
+                            std::cerr << "Failed to receive message\n";
+                            continue; 
+                        }
 
                         if (!conn.send_interested()) {
                             std::cerr << "Failed to send interested\n";
@@ -90,10 +104,10 @@ int main() {
 
                         bool unchoked = false;
                         while (true) {
-                            int msg_id = conn.receive_message();
-                            if (msg_id == -1) break; 
+                            PeerConnection::PeerMessage msg = conn.receive_message(); 
+                            if (!msg.valid) break; 
                             
-                            if (msg_id == 1) { // Unchoke
+                            if (msg.id == 1) { // Unchoke
                                 std::cout << "Peer " << peer.ip << " unchoked us. Downloading...\n";
                                 unchoked = true;
                                 break;
@@ -101,10 +115,47 @@ int main() {
                         }
 
                         if (unchoked) {
+                            
+                            std::vector<unsigned char> full_piece; 
+
                             if (conn.send_request(0, 0, 16384)) {
-                                if (conn.receive_message() == 7) {
-                                    std::cout << "Successfully downloaded block from " << peer.ip << "!\n";
+                                PeerConnection::PeerMessage piece_msg = conn.receive_message(); 
+                                
+                                if (piece_msg.valid && piece_msg.id == 7) {
+                                    if (piece_msg.payload.size() < 8) {
+                                        std::cerr << "Invalid piece payload \n"; 
+                                    }else {
+                                        std::vector<unsigned char> block_data(piece_msg.payload.begin() + 8, piece_msg.payload.end());
+                                        full_piece.insert(full_piece.end(), block_data.begin(), block_data.end());
+                                        
+                                    }
                                 }
+                            }
+
+                            if (conn.send_request(0, 16384, 16384)) {
+                                PeerConnection::PeerMessage second_msg = conn.receive_message(); 
+                                
+                                if (second_msg.valid && second_msg.id == 7) {
+                                    std::vector<unsigned char> block_data(second_msg.payload.begin() + 8, second_msg.payload.end());
+                                    full_piece.insert(full_piece.end(), block_data.begin(), block_data.end());
+                                } 
+                            }
+
+                            SHA1 piece_sha1; 
+                            piece_sha1.update(
+                                std::string(
+                                    reinterpret_cast<char*>(full_piece.data()),
+                                    full_piece.size()
+                                )
+                            );
+
+                            std::string downloaded_hash_hex = piece_sha1.final(); 
+                            std::string expected_hash_hex = utils::bytes_to_hex(expected_hash); 
+
+                            if (expected_hash_hex == downloaded_hash_hex) {
+                                std::cout << "PIECE VERIFIED SUCCESSFULLY!\n";
+                            } else {
+                                std::cout << "Piece verification FAILED!\n";
                             }
                         }
                         
@@ -123,5 +174,6 @@ int main() {
         std::cout << "No peers found or tracker request failed.\n";
     }
 
+    curl_global_cleanup();
     return 0;
 }

@@ -1,4 +1,5 @@
 #include "peer.h"
+#include "utils.h"
 
 #include <iostream>
 #include <cstring>
@@ -116,12 +117,26 @@ bool PeerConnection::receive_handshake(
     const std::vector<unsigned char>& expected_info_hash
 ) {
     unsigned char response[68];
+    int total_received = 0;
 
-    int received = recv(sockfd, reinterpret_cast<char*>(response), 68, 0);
-
-    if (received != 68) {
-        std::cerr << "Invalid handshake response\n";
-        return false;
+    while (total_received < 68) {
+        int r = recv(sockfd, 
+                     reinterpret_cast<char*>(response) + total_received, 
+                     68 - total_received, 
+                     0);
+        if (r <= 0) {
+            if (r == 0) {
+                std::cerr << "Peer closed connection during handshake\n";
+            } else {
+                #ifdef _WIN32
+                std::cerr << "Socket error during handshake. Error Code: " << WSAGetLastError() << "\n";
+                #else
+                std::cerr << "Socket error during handshake. errno: " << errno << "\n";
+                #endif
+            }
+            return false;
+        }
+        total_received += r;
     }
 
     // validate protocol length
@@ -153,8 +168,10 @@ bool PeerConnection::receive_handshake(
     return true;
 }
 
-int PeerConnection::receive_message() {
+PeerConnection::PeerMessage PeerConnection::receive_message() {
 
+    PeerMessage msg;
+    msg.valid = false; 
     unsigned char length_buf[4];
     int total_received = 0;
 
@@ -173,25 +190,23 @@ int PeerConnection::receive_message() {
                 std::cerr << "Socket error while reading length. errno: " << errno << "\n";
                 #endif
             }
-            return -1;
+            return msg;
         }
         total_received += r;
     }
 
-    uint32_t length =
-        (length_buf[0] << 24) |
-        (length_buf[1] << 16) |
-        (length_buf[2] << 8) |
-        length_buf[3];
+    uint32_t length = utils::read_uint32_be(length_buf);
 
     // keepalive
     if (length == 0) {
-        return -2;
+        msg.id = -2;
+        msg.valid = true; 
+        return msg; 
     }
 
     if (length > 1024 * 1024) { // Safety check: 1MB max message for now
         std::cerr << "Message too large: " << length << "\n";
-        return -1;
+        return msg;
     }
 
     // 2. Read exactly 1 byte for the message ID
@@ -199,29 +214,30 @@ int PeerConnection::receive_message() {
     int r = recv(sockfd, reinterpret_cast<char*>(&message_id), 1, 0);
     if (r != 1) {
         std::cerr << "Failed to read message id\n";
-        return -1;
+        return msg;
     }
+    msg.id = static_cast<int>(message_id);
 
     // 3. Read the entire payload
     int payload_length = length - 1;
     if (payload_length > 0) {
-        std::vector<unsigned char> payload(payload_length);
+        msg.payload.resize(payload_length); 
         int payload_received = 0;
         
         while (payload_received < payload_length) {
             int r = recv(sockfd,
-                        reinterpret_cast<char*>(payload.data()) + payload_received,
+                        reinterpret_cast<char*>(msg.payload.data()) + payload_received,
                         payload_length - payload_received,
                         0);
             if (r <= 0) {
                 std::cerr << "Failed to read full payload\n";
-                return -1;
+                return msg;
             }
             payload_received += r;
         }
     }
-
-    return static_cast<int>(message_id);
+    msg.valid = true; 
+    return msg;
 }
 
 bool PeerConnection::send_interested() {

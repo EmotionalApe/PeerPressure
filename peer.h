@@ -24,6 +24,12 @@ private:
 #endif
 
 public:
+    struct PeerMessage{
+        int id; 
+        std::vector<unsigned char> payload;
+        bool valid; 
+    };
+
     PeerConnection(const std::string& ip, uint16_t port);
     bool connect_to_peer();
     bool send_handshake(
@@ -35,7 +41,7 @@ public:
         const std::vector<unsigned char>& expected_info_hash
     );
 
-    int receive_message(); 
+    PeerMessage receive_message(); 
 
     bool send_interested();
 

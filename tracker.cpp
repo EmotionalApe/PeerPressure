@@ -1,29 +1,12 @@
 #include "tracker.h"
 #include "bencode.h"
+#include "utils.h"
 #include <curl/curl.h>
 #include <iostream>
 #include <iomanip>
 #include <sstream>
 
-// --- Helper Functions (Local to tracker.cpp) ---
-
-static std::vector<unsigned char> hex_to_bytes(const std::string& hex) {
-    std::vector<unsigned char> bytes;
-    for (size_t i = 0; i < hex.length(); i += 2) {
-        std::string byteString = hex.substr(i, 2);
-        bytes.push_back(static_cast<unsigned char>(std::stoi(byteString, nullptr, 16)));
-    }
-    return bytes;
-}
-
-template <typename T>
-static std::string url_encode(const T& data) {
-    std::ostringstream oss;
-    for (unsigned char byte : data) {
-        oss << '%' << std::uppercase << std::hex << std::setw(2) << std::setfill('0') << static_cast<int>(byte);
-    }
-    return oss.str();
-}
+// --- Helper Functions ---
 
 static size_t write_callback(void* contents, size_t size, size_t nmemb, std::string* output) {
     size_t total = size * nmemb;
@@ -39,8 +22,8 @@ Tracker::Tracker(const std::string& announce_url, const std::string& info_hash, 
 }
 
 std::string Tracker::build_url() {
-    std::string encoded_hash = url_encode(hex_to_bytes(info_hash));
-    std::string encoded_peer_id = url_encode(peer_id);
+    std::string encoded_hash = utils::url_encode(utils::hex_to_bytes(info_hash));
+    std::string encoded_peer_id = utils::url_encode(peer_id);
 
     std::string url = announce_url +
         "?info_hash=" + encoded_hash +
@@ -89,5 +72,5 @@ std::vector<Peer> Tracker::get_peers() {
 }
 
 std::vector<unsigned char> Tracker::get_raw_info_hash() {
-    return hex_to_bytes(info_hash);
+    return utils::hex_to_bytes(info_hash);
 }
