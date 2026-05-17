@@ -9,9 +9,83 @@
 #include "tracker.h"
 #include "peer.h"
 #include "utils.h"
+#include "piece_manager.h"
 #include <curl/curl.h>
+#include "file_manager.h"
 
 // --- Torrent Logic ---
+
+std::vector<unsigned char> download_piece(
+    PeerConnection& conn,
+    uint32_t piece_index,
+    uint32_t piece_length
+) {
+
+    const uint32_t BLOCK_SIZE = 16384;
+
+    std::vector<unsigned char> full_piece;
+
+    uint32_t downloaded = 0;
+
+    while (downloaded < piece_length) {
+
+        uint32_t remaining =
+            piece_length - downloaded;
+
+        uint32_t request_size =
+            std::min(BLOCK_SIZE, remaining);
+
+        // request block
+        if (!conn.send_request(
+            piece_index,
+            downloaded,
+            request_size
+        )) {
+
+            std::cerr << "Failed to request block\n";
+            return {};
+        }
+
+        // receive piece message
+        PeerConnection::PeerMessage msg =
+            conn.receive_message();
+
+        if (!msg.valid || msg.id != 7) {
+
+            std::cerr << "Failed to receive piece block\n";
+            return {};
+        }
+
+        // validate payload
+        if (msg.payload.size() < 8) {
+
+            std::cerr << "Invalid piece payload\n";
+            return {};
+        }
+
+        // extract block data
+        std::vector<unsigned char> block_data(
+            msg.payload.begin() + 8,
+            msg.payload.end()
+        );
+
+        full_piece.insert(
+            full_piece.end(),
+            block_data.begin(),
+            block_data.end()
+        );
+
+        downloaded += block_data.size();
+
+        std::cout << "Downloaded "
+                  << downloaded
+                  << " / "
+                  << piece_length
+                  << " bytes\n";
+    }
+
+    return full_piece;
+}
 
 int main() {
     curl_global_init(CURL_GLOBAL_DEFAULT);
@@ -42,8 +116,17 @@ int main() {
 
     //pieces blob for hash checking
     std::string pieces_blob = info_dict["pieces"]._str_val; 
-    //piece 0 hash
-    std::string expected_hash = pieces_blob.substr(0, 20); 
+    uint32_t piece_length = 0;
+    if (info_dict.count("piece length")) {
+        piece_length = static_cast<uint32_t>(info_dict["piece length"]._int_val);
+    }
+    uint32_t total_pieces =
+    pieces_blob.size() / 20;
+
+    std::cout << "Total Pieces: "
+            << total_pieces
+            << "\n";
+    PieceManager piece_manager(pieces_blob, piece_length);
 
 
     // 3. Calculate Total Length
@@ -69,6 +152,8 @@ int main() {
     // 5. Request Peers from Tracker
     Tracker tracker(announce, hash_hex, total_length);
     std::vector<Peer> peers = tracker.get_peers();
+
+    std::vector<unsigned char> torrent_data;
 
     // 6. Display Peers
     if (!peers.empty()) {
@@ -115,47 +200,72 @@ int main() {
                         }
 
                         if (unchoked) {
-                            
-                            std::vector<unsigned char> full_piece; 
+                            for (uint32_t piece = 0; piece < total_pieces; piece++) {
+                                uint32_t current_piece_length = piece_length;
+                                uint64_t piece_start = static_cast<uint64_t>(piece) * piece_length;
 
-                            if (conn.send_request(0, 0, 16384)) {
-                                PeerConnection::PeerMessage piece_msg = conn.receive_message(); 
-                                
-                                if (piece_msg.valid && piece_msg.id == 7) {
-                                    if (piece_msg.payload.size() < 8) {
-                                        std::cerr << "Invalid piece payload \n"; 
-                                    }else {
-                                        std::vector<unsigned char> block_data(piece_msg.payload.begin() + 8, piece_msg.payload.end());
-                                        full_piece.insert(full_piece.end(), block_data.begin(), block_data.end());
-                                        
-                                    }
+                                uint64_t remaining = total_length - piece_start;
+
+                                if (remaining < piece_length) {
+                                    current_piece_length = static_cast<uint32_t>(remaining);
                                 }
-                            }
-
-                            if (conn.send_request(0, 16384, 16384)) {
-                                PeerConnection::PeerMessage second_msg = conn.receive_message(); 
+                                std::vector<unsigned char> piece_data =
+                                    download_piece(conn, piece, current_piece_length);
                                 
-                                if (second_msg.valid && second_msg.id == 7) {
-                                    std::vector<unsigned char> block_data(second_msg.payload.begin() + 8, second_msg.payload.end());
-                                    full_piece.insert(full_piece.end(), block_data.begin(), block_data.end());
-                                } 
+                                if (piece_data.empty()) {
+                                    std::cerr << "Failed downloading piece "
+                                                << piece
+                                                << "\n";
+                                    break;
+                                }
+        
+                                if (!piece_manager.verify_piece(piece, piece_data)) {
+                                    std::cerr << "Piece verification failed: "
+                                                << piece
+                                                << "\n";
+        
+                                    break;
+                                }
+        
+                                torrent_data.insert(
+                                    torrent_data.end(),
+                                    piece_data.begin(),
+                                    piece_data.end()
+                                );
+        
+                                std::cout << "Verified piece "
+                                            << piece
+                                            << " / "
+                                            << total_pieces
+                                            << "\n";
                             }
 
-                            SHA1 piece_sha1; 
-                            piece_sha1.update(
-                                std::string(
-                                    reinterpret_cast<char*>(full_piece.data()),
-                                    full_piece.size()
-                                )
-                            );
+                            if (!torrent_data.empty()) {
+                                std::ofstream out(
+                                    "torrent_data.bin",
+                                    std::ios::binary
+                                );
 
-                            std::string downloaded_hash_hex = piece_sha1.final(); 
-                            std::string expected_hash_hex = utils::bytes_to_hex(expected_hash); 
+                                out.write(
+                                    reinterpret_cast<const char*>(
+                                        torrent_data.data()
+                                    ),
+                                    torrent_data.size()
+                                );
+                                out.close();
 
-                            if (expected_hash_hex == downloaded_hash_hex) {
-                                std::cout << "PIECE VERIFIED SUCCESSFULLY!\n";
-                            } else {
-                                std::cout << "Piece verification FAILED!\n";
+                                std::cout << "Saved torrent_data.bin\n";
+                                if (FileManager::reconstruct_files(
+                                    info,
+                                    torrent_data
+                                )) {
+
+                                    std::cout << "Torrent reconstruction complete!\n";
+                                }
+                                else {
+
+                                    std::cout << "Torrent reconstruction failed!\n";
+                                }
                             }
                         }
                         
