@@ -16,6 +16,9 @@ class PeerConnection {
 private:
     std::string ip;
     uint16_t port;
+    std::vector<bool> available_pieces;
+    bool peer_choking = true;
+    bool peer_interested = false;
 
 #ifdef _WIN32
     SOCKET sockfd;
@@ -50,6 +53,13 @@ public:
         uint32_t begin,
         uint32_t length
     );
+
+    void parse_bitfield (const std::vector<unsigned char> &payload); 
+    bool has_piece(uint32_t piece_index) const; 
+    void handle_have(const std::vector<unsigned char> &payload);
+    void process_message(const PeerMessage& msg);
+    bool is_choking() const;
+    bool is_readable(int timeout_ms);
 
     void close_connection();
 };

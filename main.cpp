@@ -47,8 +47,12 @@ std::vector<unsigned char> download_piece(
         }
 
         // receive piece message
-        PeerConnection::PeerMessage msg =
-            conn.receive_message();
+        PeerConnection::PeerMessage msg;
+        while (true) {
+            msg = conn.receive_message();
+            conn.process_message(msg);
+            break;
+        }
 
         if (!msg.valid || msg.id != 7) {
 
@@ -85,6 +89,86 @@ std::vector<unsigned char> download_piece(
     }
 
     return full_piece;
+}
+
+std::vector<unsigned char> download_piece_from_peers(
+    const std::vector<Peer>& peers,
+    uint32_t piece_index,
+    uint32_t piece_length,
+    const std::vector<unsigned char>& raw_info_hash,
+
+    PieceManager& piece_manager
+) {
+
+    for (const auto& peer : peers) {
+
+        std::cout << "\nTrying peer " << peer.ip << ":" << peer.port << "\n";
+
+        PeerConnection conn(peer.ip, peer.port);
+
+        if (!conn.connect_to_peer()) {
+            continue;
+        }
+
+        if (!conn.send_handshake(raw_info_hash, "-PC0001-123456789012")) {
+            conn.close_connection();
+            continue;
+        }
+
+        if (!conn.receive_handshake(raw_info_hash)) {
+            conn.close_connection();
+            continue;
+        }
+
+        // process initial messages
+        while (conn.is_readable(500)) {
+            PeerConnection::PeerMessage msg = conn.receive_message();
+            if (!msg.valid) break;
+            conn.process_message(msg);
+        }
+
+        // peer lacks piece
+        if (!conn.has_piece(piece_index)) {
+
+            std::cout << "Peer lacks piece " << piece_index << "\n";
+
+            conn.close_connection();
+            continue;
+        }
+
+        if (!conn.send_interested()) {
+
+            conn.close_connection();
+            continue;
+        }
+
+        // wait for unchoke
+        while (conn.is_choking()) {
+
+            PeerConnection::PeerMessage msg = conn.receive_message();
+
+            conn.process_message(msg);
+        }
+
+        // download piece
+        auto piece_data = download_piece(conn, piece_index, piece_length);
+        conn.close_connection();
+
+        if (piece_data.empty()) {
+            continue;
+        }
+
+        // verify piece
+        if (!piece_manager.verify_piece(piece_index, piece_data)) {
+            std::cout << "Verification failed\n";
+            continue;
+        }
+
+        std::cout << "Successfully downloaded piece " << piece_index << "\n";
+        return piece_data;
+    }
+
+    return {};
 }
 
 int main() {
@@ -177,27 +261,28 @@ int main() {
                         std::cout << "Handshake verified with peer " << peer.ip << "!\n";
                         handshake_success = true;
                         
-                        PeerConnection::PeerMessage msg = conn.receive_message();
-                        if (!msg.valid) {
-                            std::cerr << "Failed to receive message\n";
-                            continue; 
-                        }
-
                         if (!conn.send_interested()) {
                             std::cerr << "Failed to send interested\n";
                         }
 
-                        bool unchoked = false;
-                        while (true) {
+                        while (conn.is_choking()) {
                             PeerConnection::PeerMessage msg = conn.receive_message(); 
                             if (!msg.valid) break; 
                             
-                            if (msg.id == 1) { // Unchoke
-                                std::cout << "Peer " << peer.ip << " unchoked us. Downloading...\n";
-                                unchoked = true;
-                                break;
-                            }
+                            conn.process_message(msg);
                         }
+                        bool unchoked = !conn.is_choking();
+                        if (unchoked) {
+                            std::cout << "Peer " << peer.ip << " unchoked us. Downloading...\n";
+                        }
+
+                        std::cout << "Peer has piece 0? "
+                                  << conn.has_piece(0)
+                                  << "\n";
+
+                        std::cout << "Peer has piece 588? "
+                                  << conn.has_piece(588)
+                                  << "\n";
 
                         if (unchoked) {
                             for (uint32_t piece = 0; piece < total_pieces; piece++) {
@@ -209,8 +294,21 @@ int main() {
                                 if (remaining < piece_length) {
                                     current_piece_length = static_cast<uint32_t>(remaining);
                                 }
+                                if (!conn.has_piece(piece)) {
+                                    std::cerr << "Peer does not have piece "
+                                              << piece
+                                              << "\n";
+                                    continue;
+                                }
+
                                 std::vector<unsigned char> piece_data =
-                                    download_piece(conn, piece, current_piece_length);
+                                    download_piece_from_peers(
+                                        peers,
+                                        piece,
+                                        current_piece_length,
+                                        raw_info_hash,
+                                        piece_manager
+                                    );
                                 
                                 if (piece_data.empty()) {
                                     std::cerr << "Failed downloading piece "

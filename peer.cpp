@@ -12,6 +12,7 @@
     #include <arpa/inet.h>
     #include <unistd.h>
     #include <sys/socket.h>
+    #include <sys/select.h>
 #endif
 
 PeerConnection::PeerConnection(const std::string& ip, uint16_t port)
@@ -323,13 +324,148 @@ bool PeerConnection::send_request(
     return true;
 }
 
-void PeerConnection::close_connection() {
+void PeerConnection::parse_bitfield(
+    const std::vector<unsigned char>& payload
+) {
 
-#ifdef _WIN32
-    closesocket(sockfd);
-#else
-    close(sockfd);
-#endif
+    available_pieces.clear();
+
+    for (unsigned char byte : payload) {
+
+        for (int bit = 7; bit >= 0; bit--) {
+
+            bool has_piece =
+                (byte >> bit) & 1;
+
+            available_pieces.push_back(
+                has_piece
+            );
+        }
+    }
+
+    std::cout << "Parsed bitfield: "
+              << available_pieces.size()
+              << " pieces tracked\n";
+}
+
+bool PeerConnection::has_piece(
+    uint32_t piece_index
+) const {
+
+    if (available_pieces.empty()) {
+        return true;
+    }
+
+    if (piece_index >= available_pieces.size()) {
+        return false;
+    }
+
+    return available_pieces[piece_index];
+}
+
+void PeerConnection::handle_have(
+    const std::vector<unsigned char>& payload
+) {
+
+    if (payload.size() != 4) {
+
+        std::cerr << "Invalid HAVE payload\n";
+        return;
+    }
+
+    uint32_t piece_index = utils::read_uint32_be(payload.data());
+
+    if (piece_index >= available_pieces.size()) {
+
+        available_pieces.resize(
+            piece_index + 1,
+            false
+        );
+    }
+
+    available_pieces[piece_index] = true;
+
+    std::cout << "Peer now has piece "
+              << piece_index
+              << "\n";
+}
+
+void PeerConnection::process_message(const PeerMessage& msg) {
+    if (!msg.valid) {
+        return;
+    }
+
+    switch (msg.id) {
+
+        // choke
+        case 0:
+            peer_choking = true;
+
+            std::cout << "Peer choked us\n";
+            break;
+
+        // unchoke
+        case 1:
+            peer_choking = false;
+
+            std::cout << "Peer unchoked us\n";
+            break;
+
+        // interested
+        case 2:
+            peer_interested = true;
+
+            std::cout << "Peer is interested\n";
+            break;
+
+        // not interested
+        case 3:
+            peer_interested = false;
+
+            std::cout << "Peer is not interested\n";
+            break;
+
+        // HAVE
+        case 4:
+            handle_have(msg.payload);
+            break;
+
+        // bitfield
+        case 5:
+            parse_bitfield(msg.payload);
+            break;
+
+        default:
+            std::cout << "Unhandled message ID: "
+                      << msg.id
+                      << "\n";
+            break;
+    }
+}
+
+bool PeerConnection::is_choking() const {
+    return peer_choking;
+}
+
+bool PeerConnection::is_readable(int timeout_ms) {
+    fd_set fds;
+    FD_ZERO(&fds);
+    FD_SET(sockfd, &fds);
+
+    timeval tv;
+    tv.tv_sec = timeout_ms / 1000;
+    tv.tv_usec = (timeout_ms % 1000) * 1000;
+
+    int ret = select(static_cast<int>(sockfd) + 1, &fds, nullptr, nullptr, &tv);
+    return ret > 0;
+}
+
+void PeerConnection::close_connection() {
+    #ifdef _WIN32
+        closesocket(sockfd);
+    #else
+        close(sockfd);
+    #endif
 
     std::cout << "Connection closed\n";
 }
