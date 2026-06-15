@@ -12,6 +12,7 @@
 #include "piece_manager.h"
 #include <curl/curl.h>
 #include "file_manager.h"
+#include "peer_manager.h"
 
 // --- Torrent Logic ---
 
@@ -50,8 +51,13 @@ std::vector<unsigned char> download_piece(
         PeerConnection::PeerMessage msg;
         while (true) {
             msg = conn.receive_message();
+            if (!msg.valid) {
+                break;
+            }
             conn.process_message(msg);
-            break;
+            if (msg.id == 7) {
+                break;
+            }
         }
 
         if (!msg.valid || msg.id != 7) {
@@ -91,85 +97,7 @@ std::vector<unsigned char> download_piece(
     return full_piece;
 }
 
-std::vector<unsigned char> download_piece_from_peers(
-    const std::vector<Peer>& peers,
-    uint32_t piece_index,
-    uint32_t piece_length,
-    const std::vector<unsigned char>& raw_info_hash,
 
-    PieceManager& piece_manager
-) {
-
-    for (const auto& peer : peers) {
-
-        std::cout << "\nTrying peer " << peer.ip << ":" << peer.port << "\n";
-
-        PeerConnection conn(peer.ip, peer.port);
-
-        if (!conn.connect_to_peer()) {
-            continue;
-        }
-
-        if (!conn.send_handshake(raw_info_hash, "-PC0001-123456789012")) {
-            conn.close_connection();
-            continue;
-        }
-
-        if (!conn.receive_handshake(raw_info_hash)) {
-            conn.close_connection();
-            continue;
-        }
-
-        // process initial messages
-        while (conn.is_readable(500)) {
-            PeerConnection::PeerMessage msg = conn.receive_message();
-            if (!msg.valid) break;
-            conn.process_message(msg);
-        }
-
-        // peer lacks piece
-        if (!conn.has_piece(piece_index)) {
-
-            std::cout << "Peer lacks piece " << piece_index << "\n";
-
-            conn.close_connection();
-            continue;
-        }
-
-        if (!conn.send_interested()) {
-
-            conn.close_connection();
-            continue;
-        }
-
-        // wait for unchoke
-        while (conn.is_choking()) {
-
-            PeerConnection::PeerMessage msg = conn.receive_message();
-
-            conn.process_message(msg);
-        }
-
-        // download piece
-        auto piece_data = download_piece(conn, piece_index, piece_length);
-        conn.close_connection();
-
-        if (piece_data.empty()) {
-            continue;
-        }
-
-        // verify piece
-        if (!piece_manager.verify_piece(piece_index, piece_data)) {
-            std::cout << "Verification failed\n";
-            continue;
-        }
-
-        std::cout << "Successfully downloaded piece " << piece_index << "\n";
-        return piece_data;
-    }
-
-    return {};
-}
 
 int main() {
     curl_global_init(CURL_GLOBAL_DEFAULT);
@@ -246,137 +174,74 @@ int main() {
             std::cout << "  - " << peer.ip << ":" << peer.port << "\n";
         }
 
-        // 7. Peer Handshake (Attempt with peers until one succeeds)
+        // 7. Peer Initialization and Downloading
         std::vector<unsigned char> raw_info_hash = tracker.get_raw_info_hash();
-        bool handshake_success = false;
-
-        for (const auto& peer : peers) {
-            std::cout << "\nAttempting handshake with " << peer.ip << ":" << peer.port << "...\n";
-            
-            PeerConnection conn(peer.ip, peer.port);
-
-            if (conn.connect_to_peer()) {
-                if (conn.send_handshake(raw_info_hash, "-PC0001-123456789012")) {
-                    if (conn.receive_handshake(raw_info_hash)) {
-                        std::cout << "Handshake verified with peer " << peer.ip << "!\n";
-                        handshake_success = true;
-                        
-                        if (!conn.send_interested()) {
-                            std::cerr << "Failed to send interested\n";
-                        }
-
-                        while (conn.is_choking()) {
-                            PeerConnection::PeerMessage msg = conn.receive_message(); 
-                            if (!msg.valid) break; 
-                            
-                            conn.process_message(msg);
-                        }
-                        bool unchoked = !conn.is_choking();
-                        if (unchoked) {
-                            std::cout << "Peer " << peer.ip << " unchoked us. Downloading...\n";
-                        }
-
-                        std::cout << "Peer has piece 0? "
-                                  << conn.has_piece(0)
-                                  << "\n";
-
-                        std::cout << "Peer has piece 588? "
-                                  << conn.has_piece(588)
-                                  << "\n";
-
-                        if (unchoked) {
-                            for (uint32_t piece = 0; piece < total_pieces; piece++) {
-                                uint32_t current_piece_length = piece_length;
-                                uint64_t piece_start = static_cast<uint64_t>(piece) * piece_length;
-
-                                uint64_t remaining = total_length - piece_start;
-
-                                if (remaining < piece_length) {
-                                    current_piece_length = static_cast<uint32_t>(remaining);
-                                }
-                                if (!conn.has_piece(piece)) {
-                                    std::cerr << "Peer does not have piece "
-                                              << piece
-                                              << "\n";
-                                    continue;
-                                }
-
-                                std::vector<unsigned char> piece_data =
-                                    download_piece_from_peers(
-                                        peers,
-                                        piece,
-                                        current_piece_length,
-                                        raw_info_hash,
-                                        piece_manager
-                                    );
-                                
-                                if (piece_data.empty()) {
-                                    std::cerr << "Failed downloading piece "
-                                                << piece
-                                                << "\n";
-                                    break;
-                                }
         
-                                if (!piece_manager.verify_piece(piece, piece_data)) {
-                                    std::cerr << "Piece verification failed: "
-                                                << piece
-                                                << "\n";
-        
-                                    break;
-                                }
-        
-                                torrent_data.insert(
-                                    torrent_data.end(),
-                                    piece_data.begin(),
-                                    piece_data.end()
-                                );
-        
-                                std::cout << "Verified piece "
-                                            << piece
-                                            << " / "
-                                            << total_pieces
-                                            << "\n";
-                            }
-
-                            if (!torrent_data.empty()) {
-                                std::ofstream out(
-                                    "torrent_data.bin",
-                                    std::ios::binary
-                                );
-
-                                out.write(
-                                    reinterpret_cast<const char*>(
-                                        torrent_data.data()
-                                    ),
-                                    torrent_data.size()
-                                );
-                                out.close();
-
-                                std::cout << "Saved torrent_data.bin\n";
-                                if (FileManager::reconstruct_files(
-                                    info,
-                                    torrent_data
-                                )) {
-
-                                    std::cout << "Torrent reconstruction complete!\n";
-                                }
-                                else {
-
-                                    std::cout << "Torrent reconstruction failed!\n";
-                                }
-                            }
-                        }
-                        
-                        conn.close_connection();
-                        break;
-                    }
-                }
-                conn.close_connection();
-            }
+        PeerManager peer_manager;
+        if (!peer_manager.initialize_peers(peers, raw_info_hash)) {
+            std::cerr << "No usable peers\n";
+            return 1;
         }
 
-        if (!handshake_success) {
-            std::cout << "\nFailed to handshake with any available peers.\n";
+        for (uint32_t piece = 0; piece < total_pieces; piece++) {
+            uint32_t current_piece_length = piece_length;
+            uint64_t piece_start = static_cast<uint64_t>(piece) * piece_length;
+            uint64_t remaining = total_length - piece_start;
+
+            if (remaining < piece_length) {
+                current_piece_length = static_cast<uint32_t>(remaining);
+            }
+
+            std::vector<unsigned char> piece_data;
+            bool success = false;
+
+            while (true) {
+                PeerConnection* peer = peer_manager.get_peer_for_piece(piece);
+                if (!peer) {
+                    break;
+                }
+
+                piece_data = download_piece(*peer, piece, current_piece_length);
+                if (!piece_data.empty()) {
+                    if (piece_manager.verify_piece(piece, piece_data)) {
+                        success = true;
+                        break;
+                    } else {
+                        std::cerr << "Piece verification failed. Removing peer and trying another...\n";
+                    }
+                } else {
+                    std::cerr << "Download failed from peer. Removing peer and trying another...\n";
+                }
+
+                // Remove failed peer and retry
+                peer_manager.remove_peer(peer);
+            }
+
+            if (!success) {
+                std::cerr << "Failed downloading piece " << piece << " from all available peers\n";
+                break;
+            }
+
+            torrent_data.insert(
+                torrent_data.end(),
+                piece_data.begin(),
+                piece_data.end()
+            );
+
+            std::cout << "Verified piece " << piece << " / " << total_pieces << "\n";
+        }
+
+        if (!torrent_data.empty()) {
+            std::ofstream out("torrent_data.bin", std::ios::binary);
+            out.write(reinterpret_cast<const char*>(torrent_data.data()), torrent_data.size());
+            out.close();
+
+            std::cout << "Saved torrent_data.bin\n";
+            if (FileManager::reconstruct_files(info, torrent_data)) {
+                std::cout << "Torrent reconstruction complete!\n";
+            } else {
+                std::cout << "Torrent reconstruction failed!\n";
+            }
         }
     } else {
         std::cout << "No peers found or tracker request failed.\n";

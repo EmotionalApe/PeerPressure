@@ -43,7 +43,7 @@ bool PeerConnection::connect_to_peer() {
 
     // Set socket timeouts
 #ifdef _WIN32
-    DWORD timeout = 30000; // 30 seconds in ms
+    DWORD timeout = 5000; // 5 seconds in ms
     setsockopt(sockfd, SOL_SOCKET, SO_RCVTIMEO, (const char*)&timeout, sizeof(timeout));
     setsockopt(sockfd, SOL_SOCKET, SO_SNDTIMEO, (const char*)&timeout, sizeof(timeout));
 #else
@@ -433,6 +433,10 @@ void PeerConnection::process_message(const PeerMessage& msg) {
         // bitfield
         case 5:
             parse_bitfield(msg.payload);
+            break;
+            
+        case 7:
+            // piece messages handled elsewhere
             break;
 
         default:
