@@ -26,4 +26,8 @@ public:
     void remove_peer(
         PeerConnection* peer
     );
+
+    const std::vector<PeerConnection*>& get_available_peers() const;
+
+    int score_peer(const PeerConnection* peer) const;
 };

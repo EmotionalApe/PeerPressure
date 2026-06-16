@@ -12,7 +12,8 @@ PieceManager::PieceManager(
     uint32_t piece_length
 )
     : pieces_blob(pieces_blob),
-      piece_length(piece_length) {}
+      piece_length(piece_length),
+      completed_pieces(pieces_blob.size() / 20, false) {}
 
 bool PieceManager::verify_piece(
     uint32_t piece_index,
@@ -48,4 +49,17 @@ bool PieceManager::verify_piece(
               << "\n";
 
     return expected_hash_hex == actual_hash_hex;
+}
+
+bool PieceManager::is_piece_complete(uint32_t piece_index) const {
+    if (piece_index >= completed_pieces.size()) {
+        return false;
+    }
+    return completed_pieces[piece_index];
+}
+
+void PieceManager::mark_piece_complete(uint32_t piece_index) {
+    if (piece_index < completed_pieces.size()) {
+        completed_pieces[piece_index] = true;
+    }
 }

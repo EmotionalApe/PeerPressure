@@ -13,94 +13,12 @@
 #include <curl/curl.h>
 #include "file_manager.h"
 #include "peer_manager.h"
-
-// --- Torrent Logic ---
-
-std::vector<unsigned char> download_piece(
-    PeerConnection& conn,
-    uint32_t piece_index,
-    uint32_t piece_length
-) {
-
-    const uint32_t BLOCK_SIZE = 16384;
-
-    std::vector<unsigned char> full_piece;
-
-    uint32_t downloaded = 0;
-
-    while (downloaded < piece_length) {
-
-        uint32_t remaining =
-            piece_length - downloaded;
-
-        uint32_t request_size =
-            std::min(BLOCK_SIZE, remaining);
-
-        // request block
-        if (!conn.send_request(
-            piece_index,
-            downloaded,
-            request_size
-        )) {
-
-            std::cerr << "Failed to request block\n";
-            return {};
-        }
-
-        // receive piece message
-        PeerConnection::PeerMessage msg;
-        while (true) {
-            msg = conn.receive_message();
-            if (!msg.valid) {
-                break;
-            }
-            conn.process_message(msg);
-            if (msg.id == 7) {
-                break;
-            }
-        }
-
-        if (!msg.valid || msg.id != 7) {
-
-            std::cerr << "Failed to receive piece block\n";
-            return {};
-        }
-
-        // validate payload
-        if (msg.payload.size() < 8) {
-
-            std::cerr << "Invalid piece payload\n";
-            return {};
-        }
-
-        // extract block data
-        std::vector<unsigned char> block_data(
-            msg.payload.begin() + 8,
-            msg.payload.end()
-        );
-
-        full_piece.insert(
-            full_piece.end(),
-            block_data.begin(),
-            block_data.end()
-        );
-
-        downloaded += block_data.size();
-
-        std::cout << "Downloaded "
-                  << downloaded
-                  << " / "
-                  << piece_length
-                  << " bytes\n";
-    }
-
-    return full_piece;
-}
-
-
+#include "scheduler.h"
+#include "torrent_session.h"
 
 int main() {
     curl_global_init(CURL_GLOBAL_DEFAULT);
+    
     // 1. Load Torrent File
     std::ifstream file("test2.torrent", std::ios::binary);
     if (!file) {
@@ -126,20 +44,16 @@ int main() {
     BencodeValue info = dict["info"];
     auto& info_dict = info._dict_val;
 
-    //pieces blob for hash checking
+    // pieces blob for hash checking
     std::string pieces_blob = info_dict["pieces"]._str_val; 
     uint32_t piece_length = 0;
     if (info_dict.count("piece length")) {
         piece_length = static_cast<uint32_t>(info_dict["piece length"]._int_val);
     }
-    uint32_t total_pieces =
-    pieces_blob.size() / 20;
+    uint32_t total_pieces = pieces_blob.size() / 20;
 
-    std::cout << "Total Pieces: "
-            << total_pieces
-            << "\n";
+    std::cout << "Total Pieces: " << total_pieces << "\n";
     PieceManager piece_manager(pieces_blob, piece_length);
-
 
     // 3. Calculate Total Length
     int64_t total_length = 0;
@@ -165,16 +79,13 @@ int main() {
     Tracker tracker(announce, hash_hex, total_length);
     std::vector<Peer> peers = tracker.get_peers();
 
-    std::vector<unsigned char> torrent_data;
-
-    // 6. Display Peers
     if (!peers.empty()) {
         std::cout << "Found " << peers.size() << " peers:\n";
         for (const auto& peer : peers) {
             std::cout << "  - " << peer.ip << ":" << peer.port << "\n";
         }
 
-        // 7. Peer Initialization and Downloading
+        // 6. Peer Initialization and Downloading
         std::vector<unsigned char> raw_info_hash = tracker.get_raw_info_hash();
         
         PeerManager peer_manager;
@@ -183,65 +94,14 @@ int main() {
             return 1;
         }
 
-        for (uint32_t piece = 0; piece < total_pieces; piece++) {
-            uint32_t current_piece_length = piece_length;
-            uint64_t piece_start = static_cast<uint64_t>(piece) * piece_length;
-            uint64_t remaining = total_length - piece_start;
+        // 7. Create Scheduler and start download session
+        Scheduler scheduler(peer_manager, piece_manager, total_pieces, piece_length, total_length);
+        TorrentSession session(tracker, peer_manager, piece_manager, scheduler, info, total_length);
 
-            if (remaining < piece_length) {
-                current_piece_length = static_cast<uint32_t>(remaining);
-            }
-
-            std::vector<unsigned char> piece_data;
-            bool success = false;
-
-            while (true) {
-                PeerConnection* peer = peer_manager.get_peer_for_piece(piece);
-                if (!peer) {
-                    break;
-                }
-
-                piece_data = download_piece(*peer, piece, current_piece_length);
-                if (!piece_data.empty()) {
-                    if (piece_manager.verify_piece(piece, piece_data)) {
-                        success = true;
-                        break;
-                    } else {
-                        std::cerr << "Piece verification failed. Removing peer and trying another...\n";
-                    }
-                } else {
-                    std::cerr << "Download failed from peer. Removing peer and trying another...\n";
-                }
-
-                // Remove failed peer and retry
-                peer_manager.remove_peer(peer);
-            }
-
-            if (!success) {
-                std::cerr << "Failed downloading piece " << piece << " from all available peers\n";
-                break;
-            }
-
-            torrent_data.insert(
-                torrent_data.end(),
-                piece_data.begin(),
-                piece_data.end()
-            );
-
-            std::cout << "Verified piece " << piece << " / " << total_pieces << "\n";
-        }
-
-        if (!torrent_data.empty()) {
-            std::ofstream out("torrent_data.bin", std::ios::binary);
-            out.write(reinterpret_cast<const char*>(torrent_data.data()), torrent_data.size());
-            out.close();
-
-            std::cout << "Saved torrent_data.bin\n";
-            if (FileManager::reconstruct_files(info, torrent_data)) {
-                std::cout << "Torrent reconstruction complete!\n";
-            } else {
-                std::cout << "Torrent reconstruction failed!\n";
-            }
+        if (session.start_session()) {
+            std::cout << "Download session completed successfully!\n";
+        } else {
+            std::cerr << "Download session failed!\n";
         }
     } else {
         std::cout << "No peers found or tracker request failed.\n";

@@ -93,3 +93,12 @@ void PeerManager::remove_peer(PeerConnection* peer) {
         active_peers.erase(it);
     }
 }
+
+const std::vector<PeerConnection*>& PeerManager::get_available_peers() const {
+    return active_peers;
+}
+
+int PeerManager::score_peer(const PeerConnection* peer) const {
+    // Future support for peer scoring. Currently returns a default score.
+    return 100;
+}
