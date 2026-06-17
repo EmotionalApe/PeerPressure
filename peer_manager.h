@@ -4,11 +4,12 @@
 #include "tracker.h"
 
 #include <vector>
+#include <map>
 
 class PeerManager {
 private:
-
     std::vector<PeerConnection*> active_peers;
+    std::map<uint32_t, std::vector<PeerConnection*>> availability_map;
 
 public:
 
@@ -30,4 +31,9 @@ public:
     const std::vector<PeerConnection*>& get_available_peers() const;
 
     int score_peer(const PeerConnection* peer) const;
+
+    void update_availability(PeerConnection* peer, uint32_t piece_index);
+    void build_availability_map();
+    std::vector<PeerConnection*> get_peers_for_piece(uint32_t piece_index) const;
+    size_t get_piece_availability(uint32_t piece_index) const;
 };

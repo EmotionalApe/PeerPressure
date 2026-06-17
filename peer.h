@@ -15,6 +15,8 @@
     #include <ws2tcpip.h>
 #endif
 
+class PeerManager;
+
 class PeerConnection {
 private:
     std::string ip;
@@ -22,6 +24,7 @@ private:
     std::vector<bool> available_pieces;
     bool peer_choking = true;
     bool peer_interested = false;
+    PeerManager* peer_manager = nullptr;
 
 #ifdef _WIN32
     SOCKET sockfd;
@@ -63,6 +66,8 @@ public:
     void process_message(const PeerMessage& msg);
     bool is_choking() const;
     bool is_readable(int timeout_ms);
+    void set_peer_manager(PeerManager* pm);
+    const std::vector<bool>& get_available_pieces() const;
 
     void close_connection();
 };

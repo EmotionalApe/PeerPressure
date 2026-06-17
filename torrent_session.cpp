@@ -19,10 +19,24 @@ TorrentSession::TorrentSession(
     total_length(total_length) {}
 
 bool TorrentSession::start_session() {
-    std::vector<unsigned char> torrent_data;
+    if (total_length <= 0) {
+        std::cerr << "Error: Invalid total length: " << total_length << "\n";
+        return false;
+    }
+
+    std::vector<unsigned char> torrent_data(total_length, 0);
     uint32_t piece_index = 0;
 
     std::cout << "Starting Torrent Session download...\n";
+
+    uint32_t piece_length = 0;
+    auto& info_dict = torrent_info._dict_val;
+    if (info_dict.count("piece length")) {
+        piece_length = static_cast<uint32_t>(info_dict.at("piece length")._int_val);
+    } else {
+        std::cerr << "Error: piece length not found in torrent info\n";
+        return false;
+    }
 
     while (scheduler.has_more_pieces()) {
         std::vector<unsigned char> piece_data = scheduler.download_next_piece(piece_index);
@@ -31,11 +45,13 @@ bool TorrentSession::start_session() {
             return false;
         }
 
-        torrent_data.insert(
-            torrent_data.end(),
-            piece_data.begin(),
-            piece_data.end()
-        );
+        uint64_t piece_start = static_cast<uint64_t>(piece_index) * piece_length;
+        if (piece_start + piece_data.size() > torrent_data.size()) {
+            std::cerr << "Error: piece data out of bounds for torrent_data buffer\n";
+            return false;
+        }
+
+        std::copy(piece_data.begin(), piece_data.end(), torrent_data.begin() + piece_start);
         std::cout << "Verified piece " << piece_index << "\n";
     }
 

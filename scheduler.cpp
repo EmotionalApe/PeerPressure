@@ -2,6 +2,7 @@
 #include "peer.h"
 #include <iostream>
 #include <algorithm>
+#include <limits>
 
 Scheduler::Scheduler(
     PeerManager& peer_mgr,
@@ -26,17 +27,49 @@ bool Scheduler::has_more_pieces() const {
 }
 
 std::vector<unsigned char> Scheduler::download_next_piece(uint32_t& out_piece_index) {
+    // 1. Poll active peers for any incoming messages (e.g. HAVE, bitfields, chokes)
+    std::vector<PeerConnection*> peers_to_remove;
+    for (auto peer : peer_mgr.get_available_peers()) {
+        while (peer->is_readable(5)) { // 5ms timeout to prevent long blocking
+            PeerConnection::PeerMessage msg = peer->receive_message();
+            if (!msg.valid) {
+                peers_to_remove.push_back(peer);
+                break;
+            }
+            peer->process_message(msg);
+        }
+    }
+    for (auto peer : peers_to_remove) {
+        std::cerr << "Scheduler: Peer disconnected during message polling. Removing peer.\n";
+        peer_mgr.remove_peer(peer);
+    }
+
+    if (peer_mgr.get_available_peers().empty()) {
+        std::cerr << "Scheduler: No available peers left for download.\n";
+        return {};
+    }
+
+    // 2. Select the rarest available pending piece
     int target_piece = -1;
+    size_t min_availability = std::numeric_limits<size_t>::max();
+
     for (uint32_t i = 0; i < total_pieces; ++i) {
         if (piece_states[i] == PieceState::PENDING) {
-            target_piece = i;
-            break;
+            size_t availability = peer_mgr.get_piece_availability(i);
+            if (availability > 0 && availability < min_availability) {
+                min_availability = availability;
+                target_piece = i;
+            }
         }
     }
 
     if (target_piece == -1) {
+        std::cout << "Scheduler: No pending pieces with availability > 0.\n";
         return {};
     }
+
+    std::cout << "Scheduler: Selected rarest piece " << target_piece 
+              << " with availability " << min_availability << "\n";
 
     out_piece_index = static_cast<uint32_t>(target_piece);
     uint32_t current_piece_length = piece_length;
@@ -148,5 +181,5 @@ std::vector<unsigned char> Scheduler::download_piece_from_peer(
 }
 
 void Scheduler::handle_have_update(PeerConnection* peer, uint32_t piece_index) {
-    // Future extension: update tracking of rarest pieces based on HAVE announcements
+    peer_mgr.update_availability(peer, piece_index);
 }

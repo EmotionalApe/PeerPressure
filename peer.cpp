@@ -1,5 +1,6 @@
 #include "peer.h"
 #include "utils.h"
+#include "peer_manager.h"
 
 #include <iostream>
 #include <cstring>
@@ -343,9 +344,25 @@ void PeerConnection::parse_bitfield(
         }
     }
 
+    if (peer_manager) {
+        for (size_t i = 0; i < available_pieces.size(); ++i) {
+            if (available_pieces[i]) {
+                peer_manager->update_availability(this, static_cast<uint32_t>(i));
+            }
+        }
+    }
+
     std::cout << "Parsed bitfield: "
               << available_pieces.size()
               << " pieces tracked\n";
+}
+
+void PeerConnection::set_peer_manager(PeerManager* pm) {
+    peer_manager = pm;
+}
+
+const std::vector<bool>& PeerConnection::get_available_pieces() const {
+    return available_pieces;
 }
 
 bool PeerConnection::has_piece(
@@ -384,6 +401,10 @@ void PeerConnection::handle_have(
     }
 
     available_pieces[piece_index] = true;
+
+    if (peer_manager) {
+        peer_manager->update_availability(this, piece_index);
+    }
 
     std::cout << "Peer now has piece "
               << piece_index
