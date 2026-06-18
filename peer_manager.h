@@ -5,10 +5,11 @@
 
 #include <vector>
 #include <map>
+#include <memory>
 
 class PeerManager {
 private:
-    std::vector<PeerConnection*> active_peers;
+    std::vector<std::unique_ptr<PeerConnection>> active_peers;
     std::map<uint32_t, std::vector<PeerConnection*>> availability_map;
 
 public:
@@ -28,7 +29,8 @@ public:
         PeerConnection* peer
     );
 
-    const std::vector<PeerConnection*>& get_available_peers() const;
+    std::vector<PeerConnection*> get_available_peers() const;
+
 
     int score_peer(const PeerConnection* peer) const;
 

@@ -1,8 +1,11 @@
 #include "torrent_session.h"
 #include "file_manager.h"
+#include "download_worker.h"
 #include <iostream>
 #include <fstream>
 #include <vector>
+#include <atomic>
+#include <thread>
 
 TorrentSession::TorrentSession(
     Tracker& tracker,
@@ -24,9 +27,7 @@ bool TorrentSession::start_session() {
         return false;
     }
 
-    std::vector<unsigned char> torrent_data(total_length, 0);
-    uint32_t piece_index = 0;
-
+    piece_mgr.initialize_buffer(total_length);
     std::cout << "Starting Torrent Session download...\n";
 
     uint32_t piece_length = 0;
@@ -38,23 +39,48 @@ bool TorrentSession::start_session() {
         return false;
     }
 
-    while (scheduler.has_more_pieces()) {
-        std::vector<unsigned char> piece_data = scheduler.download_next_piece(piece_index);
-        if (piece_data.empty()) {
-            std::cerr << "Failed downloading piece " << piece_index << " from all available peers\n";
-            return false;
-        }
-
-        uint64_t piece_start = static_cast<uint64_t>(piece_index) * piece_length;
-        if (piece_start + piece_data.size() > torrent_data.size()) {
-            std::cerr << "Error: piece data out of bounds for torrent_data buffer\n";
-            return false;
-        }
-
-        std::copy(piece_data.begin(), piece_data.end(), torrent_data.begin() + piece_start);
-        std::cout << "Verified piece " << piece_index << "\n";
+    std::atomic<bool> stop_flag(false);
+    auto available_peers = peer_mgr.get_available_peers();
+    if (available_peers.empty()) {
+        std::cerr << "No available peers to download.\n";
+        return false;
     }
 
+    std::vector<std::unique_ptr<DownloadWorker>> workers;
+    std::vector<std::thread> threads;
+
+    std::cout << "Spawning " << available_peers.size() << " concurrent download workers...\n";
+
+    for (size_t i = 0; i < available_peers.size(); ++i) {
+        workers.push_back(std::make_unique<DownloadWorker>(
+            static_cast<uint32_t>(i),
+            available_peers[i],
+            scheduler,
+            piece_mgr,
+            stop_flag,
+            piece_length,
+            total_length
+        ));
+    }
+
+    for (auto& worker : workers) {
+        threads.push_back(std::thread(&DownloadWorker::run, worker.get()));
+    }
+
+    // Wait for all worker threads to complete
+    for (auto& t : threads) {
+        if (t.joinable()) {
+            t.join();
+        }
+    }
+
+    if (scheduler.has_more_pieces()) {
+        std::cerr << "Error: Download incomplete. Some pieces were not downloaded.\n";
+        return false;
+    }
+
+
+    const auto& torrent_data = piece_mgr.get_torrent_data();
     if (!torrent_data.empty()) {
         std::ofstream out("torrent_data.bin", std::ios::binary);
         if (!out) {
@@ -73,6 +99,7 @@ bool TorrentSession::start_session() {
             return false;
         }
     }
+
 
     return false;
 }

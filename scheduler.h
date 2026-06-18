@@ -3,6 +3,8 @@
 #include <cstdint>
 #include <vector>
 #include <string>
+#include <mutex>
+#include <optional>
 #include "peer_manager.h"
 #include "piece_manager.h"
 
@@ -22,13 +24,8 @@ private:
     int64_t total_length;
 
     std::vector<PieceState> piece_states;
+    mutable std::mutex mutex_;
 
-    // Internal helper to download a single piece from a specific peer
-    std::vector<unsigned char> download_piece_from_peer(
-        PeerConnection& conn,
-        uint32_t piece_index,
-        uint32_t piece_len
-    );
 
 public:
     Scheduler(
@@ -39,8 +36,9 @@ public:
         int64_t total_length
     );
 
-    // Decides next piece to download, finds peer, downloads/verifies it
-    std::vector<unsigned char> download_next_piece(uint32_t& out_piece_index);
+    std::optional<uint32_t> acquire_next_piece(const PeerConnection& peer);
+    void release_piece(uint32_t piece_index);
+    void mark_complete(uint32_t piece_index);
 
     bool has_more_pieces() const;
 
