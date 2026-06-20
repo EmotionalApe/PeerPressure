@@ -16,8 +16,22 @@
 #include "scheduler.h"
 #include "torrent_session.h"
 #include "tui.h"
+#include "constants.h"
+
+#ifdef _WIN32
+    #ifndef WIN32_LEAN_AND_MEAN
+        #define WIN32_LEAN_AND_MEAN
+    #endif
+    #include <winsock2.h>
+#endif
 
 int main() {
+#ifdef _WIN32
+    // Explicitly initialise Winsock. curl_global_init also calls WSAStartup,
+    // but owning our own reference keeps networking alive if curl is ever removed.
+    WSADATA wsa;
+    WSAStartup(MAKEWORD(2, 2), &wsa);
+#endif
     curl_global_init(CURL_GLOBAL_DEFAULT);
     
     // Run Splash Screen and Torrent Selection
@@ -119,5 +133,8 @@ int main() {
     }
 
     curl_global_cleanup();
+#ifdef _WIN32
+    WSACleanup();
+#endif
     return 0;
 }

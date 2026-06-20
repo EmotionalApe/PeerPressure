@@ -1,0 +1,15 @@
+# Normalize line endings to LF for all text files.
+# Prevents CRLF/LF mismatches between Windows and Unix contributors.
+* text=auto eol=lf
+
+# Force LF for source files explicitly
+*.cpp   text eol=lf
+*.h     text eol=lf
+*.hpp   text eol=lf
+*.txt   text eol=lf
+CMakeLists.txt text eol=lf
+
+# Binary files — never touch line endings
+*.torrent binary
+*.bin     binary
+*.exe     binary

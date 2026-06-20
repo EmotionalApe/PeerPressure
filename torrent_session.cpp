@@ -8,6 +8,7 @@
 #include <atomic>
 #include <thread>
 #include <filesystem>
+#include <limits>
 
 TorrentSession::TorrentSession(
     Tracker& tracker,
@@ -233,7 +234,7 @@ TorrentSnapshot TorrentSession::get_snapshot() const {
     }
     
     uint32_t total_avail = 0;
-    uint32_t min_avail = snap.peers.empty() ? 0 : 999999;
+    uint32_t min_avail = snap.peers.empty() ? 0 : std::numeric_limits<uint32_t>::max();
     uint32_t max_avail = 0;
     for (uint32_t avail : piece_avail) {
         total_avail += avail;
@@ -243,7 +244,7 @@ TorrentSnapshot TorrentSession::get_snapshot() const {
     
     snap.swarm_stats.average_availability = snap.total_pieces > 0 ? 
         static_cast<double>(total_avail) / snap.total_pieces : 0.0;
-    snap.swarm_stats.rarest_piece_availability = min_avail == 999999 ? 0 : min_avail;
+    snap.swarm_stats.rarest_piece_availability = (min_avail == std::numeric_limits<uint32_t>::max()) ? 0 : min_avail;
     snap.swarm_stats.most_common_piece_availability = max_avail;
     
     // Workers

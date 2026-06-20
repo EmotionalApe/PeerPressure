@@ -2,6 +2,7 @@
 #include "utils.h"
 #include "peer_manager.h"
 #include "event_logger.h"
+#include "constants.h"
 
 #include <iostream>
 #include <cstring>
@@ -21,16 +22,7 @@ PeerConnection::PeerConnection(const std::string& ip, uint16_t port)
     : ip(ip), port(port) {}
 
 bool PeerConnection::connect_to_peer() {
-
-#ifdef _WIN32
-    static bool wsa_initialized = false;
-
-    if (!wsa_initialized) {
-        WSADATA wsa;
-        WSAStartup(MAKEWORD(2,2), &wsa);
-        wsa_initialized = true;
-    }
-#endif
+    // WSAStartup is handled once in main() — no per-connection init needed.
 
     struct addrinfo hints{}, *res = nullptr;
     hints.ai_family = AF_UNSPEC; // Supports both IPv4 and IPv6
@@ -84,7 +76,6 @@ bool PeerConnection::connect_to_peer() {
     }
 
     freeaddrinfo(res);
-    std::cout << "Connected!\n";
     is_connected_.store(true);
     EventLogger::instance().log("Connected to peer " + ip + ":" + std::to_string(port));
     return true;
@@ -124,7 +115,6 @@ bool PeerConnection::send_handshake(
         return false;
     }
 
-    std::cout << "Handshake sent!\n";
     EventLogger::instance().log("Handshake sent to " + ip);
     return true;
 }
@@ -188,7 +178,6 @@ bool PeerConnection::receive_handshake(
         }
     }
 
-    std::cout << "Handshake successful!\n";
     EventLogger::instance().log("Handshake successful with " + ip);
     return true;
 }
@@ -287,7 +276,6 @@ bool PeerConnection::send_interested() {
         return false;
     }
 
-    std::cout << "Interested message sent\n";
     EventLogger::instance().log("Interested sent to " + ip);
     return true;
 }
@@ -343,14 +331,6 @@ bool PeerConnection::send_request(
         return false;
     }
 
-    std::cout << "Requested piece "
-              << piece_index
-              << ", offset "
-              << begin
-              << ", length "
-              << length
-              << "\n";
-
     return true;
 }
 
@@ -378,9 +358,6 @@ void PeerConnection::parse_bitfield(
         }
     }
 
-    std::cout << "Parsed bitfield: "
-              << pieces_copy.size()
-              << " pieces tracked\n";
     EventLogger::instance().log("Bitfield parsed for peer " + ip + " (" + std::to_string(pieces_copy.size()) + " pieces)");
 }
 
@@ -398,7 +375,7 @@ bool PeerConnection::has_piece(
 ) const {
     std::lock_guard<std::mutex> lock(mutex_);
     if (available_pieces.empty()) {
-        return true;
+        return false; // No bitfield received yet — do not assume peer has this piece.
     }
 
     if (piece_index >= available_pieces.size()) {
@@ -433,9 +410,6 @@ void PeerConnection::handle_have(
         peer_manager->update_availability(this, piece_index);
     }
 
-    std::cout << "Peer now has piece "
-              << piece_index
-              << "\n";
     EventLogger::instance().log("HAVE received from " + ip + " for piece " + std::to_string(piece_index));
 }
 
@@ -452,7 +426,6 @@ void PeerConnection::process_message(const PeerMessage& msg) {
                 std::lock_guard<std::mutex> lock(mutex_);
                 peer_choking = true;
             }
-            std::cout << "Peer choked us\n";
             EventLogger::instance().log("Peer " + ip + " choked us", "WARNING");
             break;
 
@@ -462,7 +435,6 @@ void PeerConnection::process_message(const PeerMessage& msg) {
                 std::lock_guard<std::mutex> lock(mutex_);
                 peer_choking = false;
             }
-            std::cout << "Peer unchoked us\n";
             EventLogger::instance().log("Peer " + ip + " unchoked us");
             break;
 
@@ -472,7 +444,6 @@ void PeerConnection::process_message(const PeerMessage& msg) {
                 std::lock_guard<std::mutex> lock(mutex_);
                 peer_interested = true;
             }
-            std::cout << "Peer is interested\n";
             EventLogger::instance().log("Peer " + ip + " is interested");
             break;
 
@@ -482,7 +453,6 @@ void PeerConnection::process_message(const PeerMessage& msg) {
                 std::lock_guard<std::mutex> lock(mutex_);
                 peer_interested = false;
             }
-            std::cout << "Peer is not interested\n";
             EventLogger::instance().log("Peer " + ip + " is not interested");
             break;
 
@@ -549,7 +519,6 @@ void PeerConnection::close_connection() {
         close(sockfd);
     #endif
 
-    std::cout << "Connection closed\n";
     if (was_connected) {
         EventLogger::instance().log("Connection closed with " + ip, "WARNING");
     }

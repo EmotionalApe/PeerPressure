@@ -1,6 +1,7 @@
 #include "tracker.h"
 #include "bencode.h"
 #include "utils.h"
+#include "constants.h"
 #include <curl/curl.h>
 #include <iostream>
 #include <iomanip>
@@ -18,7 +19,7 @@ static size_t write_callback(void* contents, size_t size, size_t nmemb, std::str
 
 Tracker::Tracker(const std::string& announce_url, const std::string& info_hash, int64_t total_length)
     : announce_url(announce_url), info_hash(info_hash), total_length(total_length) {
-    peer_id = "-PC0001-123456789012";
+    peer_id = bt::PEER_ID;
 }
 
 std::string Tracker::build_url() {

@@ -80,10 +80,27 @@ set(FTXUI_BUILD_TESTS OFF CACHE BOOL "" FORCE)
 FetchContent_MakeAvailable(ftxui)
 
 # --------------------------------------------------
-# Dependencies
+# curl Setup via FetchContent
 # --------------------------------------------------
 
-find_package(CURL REQUIRED)
+set(BUILD_CURL_EXE OFF CACHE BOOL "" FORCE)
+set(BUILD_SHARED_LIBS OFF CACHE BOOL "" FORCE)
+set(BUILD_TESTING OFF CACHE BOOL "" FORCE)
+set(HTTP_ONLY ON CACHE BOOL "" FORCE)
+if(WIN32)
+    set(CURL_USE_SCHANNEL ON CACHE BOOL "" FORCE)
+    set(CURL_USE_OPENSSL OFF CACHE BOOL "" FORCE)
+endif()
+
+FetchContent_Declare(
+    curl
+    URL https://curl.se/download/curl-8.8.0.tar.gz
+)
+FetchContent_MakeAvailable(curl)
+
+if(NOT TARGET CURL::libcurl AND TARGET libcurl)
+    add_library(CURL::libcurl ALIAS libcurl)
+endif()
 
 target_link_libraries(
     torrent
@@ -102,6 +119,11 @@ if(WIN32)
         torrent
         PRIVATE
         ws2_32
+    )
+    target_compile_definitions(
+        torrent
+        PRIVATE
+        NOMINMAX
     )
 endif()
 

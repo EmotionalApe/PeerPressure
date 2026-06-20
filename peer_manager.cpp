@@ -1,13 +1,13 @@
 #include "peer_manager.h"
 #include "event_logger.h"
+#include "constants.h"
 
 #include <iostream>
 #include <algorithm>
+#include <chrono>
 
 bool PeerManager::initialize_peers(const std::vector<Peer> &peers, const std::vector<unsigned char> &info_hash) {
     for (const auto &peer : peers) {
-        std::cout << "\nConnecting to " << peer.ip << ":" << peer.port << "\n";
-
         std::shared_ptr<PeerConnection> conn = std::make_shared<PeerConnection>(peer.ip, peer.port);
         // Do not set peer manager yet to prevent registering in availability_map during initialization
 
@@ -15,7 +15,7 @@ bool PeerManager::initialize_peers(const std::vector<Peer> &peers, const std::ve
             continue;
         }
 
-        if (!conn->send_handshake(info_hash, "-PC0001-123456789012")) {
+        if (!conn->send_handshake(info_hash, bt::PEER_ID)) {
             conn->close_connection();
             continue;
         }
@@ -39,7 +39,15 @@ bool PeerManager::initialize_peers(const std::vector<Peer> &peers, const std::ve
             continue;
         }
 
+        // Wait for an unchoke message with a wall-clock deadline (30 s).
+        // Without a deadline, a peer sending infinite keep-alives would stall here forever.
+        auto unchoke_deadline = std::chrono::steady_clock::now() + std::chrono::seconds(30);
         while (conn->is_choking()) {
+            if (std::chrono::steady_clock::now() > unchoke_deadline) {
+                std::cerr << "Peer " << peer.ip << " did not unchoke within 30 s. Skipping.\n";
+                EventLogger::instance().log("Peer " + peer.ip + " unchoke timed out", "WARNING");
+                break;
+            }
             PeerConnection::PeerMessage msg = conn->receive_message();
             if (!msg.valid) {
                 break;
