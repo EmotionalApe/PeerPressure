@@ -15,14 +15,25 @@
 #include "peer_manager.h"
 #include "scheduler.h"
 #include "torrent_session.h"
+#include "tui.h"
 
 int main() {
     curl_global_init(CURL_GLOBAL_DEFAULT);
     
+    // Run Splash Screen and Torrent Selection
+    run_splash_screen();
+    std::string torrent_path = run_torrent_selection();
+    if (torrent_path.empty()) {
+        std::cerr << "Error: No torrent file selected or found.\n";
+        curl_global_cleanup();
+        return 1;
+    }
+    
     // 1. Load Torrent File
-    std::ifstream file("test2.torrent", std::ios::binary);
+    std::ifstream file(torrent_path, std::ios::binary);
     if (!file) {
-        std::cerr << "Error: Could not open test.torrent\n";
+        std::cerr << "Error: Could not open torrent file: " << torrent_path << "\n";
+        curl_global_cleanup();
         return 1;
     }
 

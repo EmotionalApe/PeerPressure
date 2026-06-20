@@ -3,6 +3,7 @@
 #include <string>
 #include <vector> 
 #include <cstdint>
+#include <atomic>
 
 #ifdef _WIN32
     #ifndef _WIN32_WINNT
@@ -15,6 +16,8 @@
     #include <ws2tcpip.h>
 #endif
 
+#include <mutex>
+
 class PeerManager;
 
 class PeerConnection {
@@ -25,6 +28,8 @@ private:
     bool peer_choking = true;
     bool peer_interested = false;
     PeerManager* peer_manager = nullptr;
+    mutable std::mutex mutex_;
+    std::atomic<bool> is_connected_{true};
 
 #ifdef _WIN32
     SOCKET sockfd;
@@ -67,7 +72,11 @@ public:
     bool is_choking() const;
     bool is_readable(int timeout_ms);
     void set_peer_manager(PeerManager* pm);
-    const std::vector<bool>& get_available_pieces() const;
+    std::vector<bool> get_available_pieces() const;
+    std::string get_ip() const;
+    uint16_t get_port() const;
+    bool is_interested() const;
+    bool is_connected() const;
 
     void close_connection();
 };

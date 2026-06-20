@@ -1,6 +1,7 @@
 #include "peer.h"
 #include "utils.h"
 #include "peer_manager.h"
+#include "event_logger.h"
 
 #include <iostream>
 #include <cstring>
@@ -8,12 +9,12 @@
 #ifdef _WIN32
     #include <winsock2.h>
     #include <ws2tcpip.h>
-    #pragma comment(lib, "ws2_32.lib")
 #else
     #include <arpa/inet.h>
     #include <unistd.h>
     #include <sys/socket.h>
     #include <sys/select.h>
+    #include <netdb.h>
 #endif
 
 PeerConnection::PeerConnection(const std::string& ip, uint16_t port)
@@ -31,7 +32,18 @@ bool PeerConnection::connect_to_peer() {
     }
 #endif
 
-    sockfd = socket(AF_INET, SOCK_STREAM, 0);
+    struct addrinfo hints{}, *res = nullptr;
+    hints.ai_family = AF_UNSPEC; // Supports both IPv4 and IPv6
+    hints.ai_socktype = SOCK_STREAM;
+
+    std::string port_str = std::to_string(port);
+    if (getaddrinfo(ip.c_str(), port_str.c_str(), &hints, &res) != 0) {
+        std::cerr << "Invalid IP address or resolution failure for " << ip << "\n";
+        is_connected_.store(false);
+        return false;
+    }
+
+    sockfd = socket(res->ai_family, res->ai_socktype, res->ai_protocol);
 
 #ifdef _WIN32
     if (sockfd == INVALID_SOCKET) {
@@ -39,6 +51,8 @@ bool PeerConnection::connect_to_peer() {
     if (sockfd < 0) {
 #endif
         std::cerr << "Failed to create socket\n";
+        freeaddrinfo(res);
+        is_connected_.store(false);
         return false;
     }
 
@@ -55,27 +69,24 @@ bool PeerConnection::connect_to_peer() {
     setsockopt(sockfd, SOL_SOCKET, SO_SNDTIMEO, (const char*)&tv, sizeof(tv));
 #endif
 
-    sockaddr_in addr{};
-    addr.sin_family = AF_INET;
-    addr.sin_port = htons(port);
-
-    if (inet_pton(AF_INET, ip.c_str(), &addr.sin_addr) <= 0) {
-        std::cerr << "Invalid IP address\n";
-        return false;
-    }
-
     std::cout << "Connecting to " << ip << ":" << port << "...\n";
 
 #ifdef _WIN32
-    if (connect(sockfd, (sockaddr*)&addr, sizeof(addr)) == SOCKET_ERROR) {
+    if (connect(sockfd, res->ai_addr, static_cast<int>(res->ai_addrlen)) == SOCKET_ERROR) {
 #else
-    if (connect(sockfd, (sockaddr*)&addr, sizeof(addr)) < 0) {
+    if (connect(sockfd, res->ai_addr, res->ai_addrlen) < 0) {
 #endif
         std::cerr << "Connection failed\n";
+        close_connection();
+        freeaddrinfo(res);
+        EventLogger::instance().log("Failed to connect to peer " + ip + ":" + std::to_string(port), "ERROR");
         return false;
     }
 
+    freeaddrinfo(res);
     std::cout << "Connected!\n";
+    is_connected_.store(true);
+    EventLogger::instance().log("Connected to peer " + ip + ":" + std::to_string(port));
     return true;
 }
 
@@ -106,12 +117,15 @@ bool PeerConnection::send_handshake(
         handshake.size(),
         0);
 
-    if (sent != handshake.size()) {
+    if (sent < 0 || static_cast<size_t>(sent) != handshake.size()) {
         std::cerr << "Failed to send full handshake\n";
+        is_connected_.store(false);
+        EventLogger::instance().log("Failed to send handshake to " + ip, "WARNING");
         return false;
     }
 
     std::cout << "Handshake sent!\n";
+    EventLogger::instance().log("Handshake sent to " + ip);
     return true;
 }
 
@@ -136,6 +150,8 @@ bool PeerConnection::receive_handshake(
                 std::cerr << "Socket error during handshake. errno: " << errno << "\n";
                 #endif
             }
+            is_connected_.store(false);
+            EventLogger::instance().log("Handshake failed (recv error) with " + ip, "ERROR");
             return false;
         }
         total_received += r;
@@ -144,6 +160,8 @@ bool PeerConnection::receive_handshake(
     // validate protocol length
     if (response[0] != 19) {
         std::cerr << "Invalid protocol length\n";
+        is_connected_.store(false);
+        EventLogger::instance().log("Handshake failed (invalid length) with " + ip, "ERROR");
         return false;
     }
 
@@ -155,6 +173,8 @@ bool PeerConnection::receive_handshake(
 
     if (protocol != "BitTorrent protocol") {
         std::cerr << "Invalid protocol string\n";
+        is_connected_.store(false);
+        EventLogger::instance().log("Handshake failed (invalid protocol) with " + ip, "ERROR");
         return false;
     }
 
@@ -162,11 +182,14 @@ bool PeerConnection::receive_handshake(
     for (int i = 0; i < 20; i++) {
         if (response[28 + i] != expected_info_hash[i]) {
             std::cerr << "Info hash mismatch\n";
+            is_connected_.store(false);
+            EventLogger::instance().log("Handshake failed (hash mismatch) with " + ip, "ERROR");
             return false;
         }
     }
 
     std::cout << "Handshake successful!\n";
+    EventLogger::instance().log("Handshake successful with " + ip);
     return true;
 }
 
@@ -192,6 +215,7 @@ PeerConnection::PeerMessage PeerConnection::receive_message() {
                 std::cerr << "Socket error while reading length. errno: " << errno << "\n";
                 #endif
             }
+            is_connected_.store(false);
             return msg;
         }
         total_received += r;
@@ -216,6 +240,7 @@ PeerConnection::PeerMessage PeerConnection::receive_message() {
     int r = recv(sockfd, reinterpret_cast<char*>(&message_id), 1, 0);
     if (r != 1) {
         std::cerr << "Failed to read message id\n";
+        is_connected_.store(false);
         return msg;
     }
     msg.id = static_cast<int>(message_id);
@@ -233,6 +258,7 @@ PeerConnection::PeerMessage PeerConnection::receive_message() {
                         0);
             if (r <= 0) {
                 std::cerr << "Failed to read full payload\n";
+                is_connected_.store(false);
                 return msg;
             }
             payload_received += r;
@@ -256,11 +282,13 @@ bool PeerConnection::send_interested() {
 
     if (sent != 5) {
         std::cerr << "Failed to send interested message\n";
+        is_connected_.store(false);
+        EventLogger::instance().log("Failed to send Interested to " + ip, "WARNING");
         return false;
     }
 
     std::cout << "Interested message sent\n";
-
+    EventLogger::instance().log("Interested sent to " + ip);
     return true;
 }
 
@@ -309,8 +337,9 @@ bool PeerConnection::send_request(
         msg.size(),
         0);
 
-    if (sent != msg.size()) {
+    if (sent < 0 || static_cast<size_t>(sent) != msg.size()) {
         std::cerr << "Failed to send request message\n";
+        is_connected_.store(false);
         return false;
     }
 
@@ -328,47 +357,46 @@ bool PeerConnection::send_request(
 void PeerConnection::parse_bitfield(
     const std::vector<unsigned char>& payload
 ) {
-
-    available_pieces.clear();
-
-    for (unsigned char byte : payload) {
-
-        for (int bit = 7; bit >= 0; bit--) {
-
-            bool has_piece =
-                (byte >> bit) & 1;
-
-            available_pieces.push_back(
-                has_piece
-            );
+    std::vector<bool> pieces_copy;
+    {
+        std::lock_guard<std::mutex> lock(mutex_);
+        available_pieces.clear();
+        for (unsigned char byte : payload) {
+            for (int bit = 7; bit >= 0; bit--) {
+                bool has_piece = (byte >> bit) & 1;
+                available_pieces.push_back(has_piece);
+            }
         }
+        pieces_copy = available_pieces;
     }
 
     if (peer_manager) {
-        for (size_t i = 0; i < available_pieces.size(); ++i) {
-            if (available_pieces[i]) {
+        for (size_t i = 0; i < pieces_copy.size(); ++i) {
+            if (pieces_copy[i]) {
                 peer_manager->update_availability(this, static_cast<uint32_t>(i));
             }
         }
     }
 
     std::cout << "Parsed bitfield: "
-              << available_pieces.size()
+              << pieces_copy.size()
               << " pieces tracked\n";
+    EventLogger::instance().log("Bitfield parsed for peer " + ip + " (" + std::to_string(pieces_copy.size()) + " pieces)");
 }
 
 void PeerConnection::set_peer_manager(PeerManager* pm) {
     peer_manager = pm;
 }
 
-const std::vector<bool>& PeerConnection::get_available_pieces() const {
+std::vector<bool> PeerConnection::get_available_pieces() const {
+    std::lock_guard<std::mutex> lock(mutex_);
     return available_pieces;
 }
 
 bool PeerConnection::has_piece(
     uint32_t piece_index
 ) const {
-
+    std::lock_guard<std::mutex> lock(mutex_);
     if (available_pieces.empty()) {
         return true;
     }
@@ -383,24 +411,23 @@ bool PeerConnection::has_piece(
 void PeerConnection::handle_have(
     const std::vector<unsigned char>& payload
 ) {
-
     if (payload.size() != 4) {
-
         std::cerr << "Invalid HAVE payload\n";
         return;
     }
 
     uint32_t piece_index = utils::read_uint32_be(payload.data());
 
-    if (piece_index >= available_pieces.size()) {
-
-        available_pieces.resize(
-            piece_index + 1,
-            false
-        );
+    {
+        std::lock_guard<std::mutex> lock(mutex_);
+        if (piece_index >= available_pieces.size()) {
+            available_pieces.resize(
+                piece_index + 1,
+                false
+            );
+        }
+        available_pieces[piece_index] = true;
     }
-
-    available_pieces[piece_index] = true;
 
     if (peer_manager) {
         peer_manager->update_availability(this, piece_index);
@@ -409,6 +436,7 @@ void PeerConnection::handle_have(
     std::cout << "Peer now has piece "
               << piece_index
               << "\n";
+    EventLogger::instance().log("HAVE received from " + ip + " for piece " + std::to_string(piece_index));
 }
 
 void PeerConnection::process_message(const PeerMessage& msg) {
@@ -420,30 +448,42 @@ void PeerConnection::process_message(const PeerMessage& msg) {
 
         // choke
         case 0:
-            peer_choking = true;
-
+            {
+                std::lock_guard<std::mutex> lock(mutex_);
+                peer_choking = true;
+            }
             std::cout << "Peer choked us\n";
+            EventLogger::instance().log("Peer " + ip + " choked us", "WARNING");
             break;
 
         // unchoke
         case 1:
-            peer_choking = false;
-
+            {
+                std::lock_guard<std::mutex> lock(mutex_);
+                peer_choking = false;
+            }
             std::cout << "Peer unchoked us\n";
+            EventLogger::instance().log("Peer " + ip + " unchoked us");
             break;
 
         // interested
         case 2:
-            peer_interested = true;
-
+            {
+                std::lock_guard<std::mutex> lock(mutex_);
+                peer_interested = true;
+            }
             std::cout << "Peer is interested\n";
+            EventLogger::instance().log("Peer " + ip + " is interested");
             break;
 
         // not interested
         case 3:
-            peer_interested = false;
-
+            {
+                std::lock_guard<std::mutex> lock(mutex_);
+                peer_interested = false;
+            }
             std::cout << "Peer is not interested\n";
+            EventLogger::instance().log("Peer " + ip + " is not interested");
             break;
 
         // HAVE
@@ -469,7 +509,23 @@ void PeerConnection::process_message(const PeerMessage& msg) {
 }
 
 bool PeerConnection::is_choking() const {
+    std::lock_guard<std::mutex> lock(mutex_);
     return peer_choking;
+}
+
+std::string PeerConnection::get_ip() const {
+    std::lock_guard<std::mutex> lock(mutex_);
+    return ip;
+}
+
+uint16_t PeerConnection::get_port() const {
+    std::lock_guard<std::mutex> lock(mutex_);
+    return port;
+}
+
+bool PeerConnection::is_interested() const {
+    std::lock_guard<std::mutex> lock(mutex_);
+    return peer_interested;
 }
 
 bool PeerConnection::is_readable(int timeout_ms) {
@@ -486,6 +542,7 @@ bool PeerConnection::is_readable(int timeout_ms) {
 }
 
 void PeerConnection::close_connection() {
+    bool was_connected = is_connected_.exchange(false);
     #ifdef _WIN32
         closesocket(sockfd);
     #else
@@ -493,4 +550,11 @@ void PeerConnection::close_connection() {
     #endif
 
     std::cout << "Connection closed\n";
+    if (was_connected) {
+        EventLogger::instance().log("Connection closed with " + ip, "WARNING");
+    }
+}
+
+bool PeerConnection::is_connected() const {
+    return is_connected_.load();
 }

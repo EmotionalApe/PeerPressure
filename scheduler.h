@@ -12,6 +12,7 @@ class Scheduler {
 public:
     enum class PieceState {
         PENDING,
+        RESERVED,
         DOWNLOADING,
         COMPLETED
     };
@@ -38,9 +39,11 @@ public:
 
     std::optional<uint32_t> acquire_next_piece(const PeerConnection& peer);
     void release_piece(uint32_t piece_index);
+    void mark_downloading(uint32_t piece_index);
     void mark_complete(uint32_t piece_index);
 
     bool has_more_pieces() const;
+    std::vector<PieceState> get_piece_states() const;
 
     // Hooks for future extensions
     void handle_have_update(PeerConnection* peer, uint32_t piece_index);

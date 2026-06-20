@@ -1,5 +1,6 @@
 #include "scheduler.h"
 #include "peer.h"
+#include "event_logger.h"
 #include <iostream>
 #include <algorithm>
 #include <limits>
@@ -45,7 +46,8 @@ std::optional<uint32_t> Scheduler::acquire_next_piece(const PeerConnection& peer
     }
 
     if (target_piece != -1) {
-        piece_states[target_piece] = PieceState::DOWNLOADING;
+        piece_states[target_piece] = PieceState::RESERVED;
+        EventLogger::instance().log("Piece " + std::to_string(target_piece) + " reserved (Rarest First)");
         return static_cast<uint32_t>(target_piece);
     }
     return std::nullopt;
@@ -55,6 +57,15 @@ void Scheduler::release_piece(uint32_t piece_index) {
     std::lock_guard<std::mutex> lock(mutex_);
     if (piece_index < total_pieces) {
         piece_states[piece_index] = PieceState::PENDING;
+        EventLogger::instance().log("Piece " + std::to_string(piece_index) + " released back to pool", "WARNING");
+    }
+}
+
+void Scheduler::mark_downloading(uint32_t piece_index) {
+    std::lock_guard<std::mutex> lock(mutex_);
+    if (piece_index < total_pieces && piece_states[piece_index] == PieceState::RESERVED) {
+        piece_states[piece_index] = PieceState::DOWNLOADING;
+        EventLogger::instance().log("Piece " + std::to_string(piece_index) + " status changed to DOWNLOADING");
     }
 }
 
@@ -63,7 +74,13 @@ void Scheduler::mark_complete(uint32_t piece_index) {
     if (piece_index < total_pieces) {
         piece_states[piece_index] = PieceState::COMPLETED;
         piece_mgr.mark_piece_complete(piece_index);
+        EventLogger::instance().log("Piece " + std::to_string(piece_index) + " marked complete");
     }
+}
+
+std::vector<Scheduler::PieceState> Scheduler::get_piece_states() const {
+    std::lock_guard<std::mutex> lock(mutex_);
+    return piece_states;
 }
 
 void Scheduler::handle_have_update(PeerConnection* peer, uint32_t piece_index) {
