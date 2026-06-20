@@ -105,5 +105,6 @@ config.status
 # Torrent files
 # =========================
 *.torrent
+!test2.torrent
 
 *.bin
