@@ -8,6 +8,32 @@ A multi-threaded C++ BitTorrent client implementing core protocols, thread-safe 
 
 **PeerPressure** is a terminal-based BitTorrent client written in C++17. The client manages peer connection pools, schedules concurrent block-level requests, verifies data integrity via SHA-1, and reconstructs file directory structures onto disk. The user interface is driven by the FTXUI library, presenting real-time transfer stats and worker thread states.
 
+## Screenshots
+
+### 1. Splash Screen
+
+The application starts with a splash screen highlighting the major components implemented in the client.
+
+<img width="1062" height="570" alt="Splash Screen" src="https://github.com/user-attachments/assets/1f4fba0d-9a95-4be0-9642-38c23b43c79b" />
+
+### 2. Torrent Selection
+
+Users can select any `.torrent` file from the configured torrent directory before starting a download session.
+
+<img width="1037" height="528" alt="Torrent Selection Menu" src="https://github.com/user-attachments/assets/3b251c90-55b9-424f-b148-543497451be4" />
+
+### 3. Real-Time Dashboard
+
+The dashboard visualizes swarm statistics, worker activity, scheduler decisions, piece lifecycle, download speed history, and protocol events in real time.
+
+<img width="800" height="400" alt="Download Dashboard" src="https://github.com/user-attachments/assets/f17cbd12-1788-460e-912d-c8aedd99aefb" />
+
+### 4. Completion Screen
+
+Once all pieces are downloaded, verified, and reconstructed, a completion screen summarizes the download session.
+
+<img width="1911" height="930" alt="Download Complete Screen" src="https://github.com/user-attachments/assets/f47d7899-ae2b-4492-90c2-60a891da27fa" />
+
 ### Features
 *   **Interactive TUI:** Console dashboard displaying total progress, transfer rates, swarm availability, active worker thread states, and log messages. Includes an interactive file selector on startup.
 *   **Multi-threaded Engine:** Spawns worker threads to handle concurrent TCP socket connections and protocol logic with swarm peers.
